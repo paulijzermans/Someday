@@ -15,6 +15,24 @@ The app runs in two modes:
 - **Demo mode** (no backend) — uses an in-memory mock stack with `SampleData`. The default if `Secrets.plist` is missing.
 - **Live mode** — wires the Supabase client when `Secrets.plist` is present. See setup below.
 
+## Run the demo (no setup)
+
+If you just want to try the app, this is the whole flow — no Supabase, no Apple Developer account, no signing.
+
+**Prerequisites**
+- A Mac
+- Xcode 16.2 or newer with the **iOS 26 simulator runtime** installed (Xcode → Settings → Components)
+
+**Steps**
+```bash
+git clone git@github.com:paulijzermans/Someday.git
+cd Someday
+open Someday.xcodeproj
+```
+On first open, Xcode resolves Swift packages (~30s) and auto-creates the `Someday` scheme. Pick any iPhone simulator and hit ▶ Run.
+
+The app boots straight onto an Amsterdam map populated with sample places, friends, and activity events. Because `Secrets.plist` isn't in the repo, `ServiceContainer.live` automatically falls back to the in-memory mock stack — nothing leaves the device.
+
 ## Project layout
 
 ```
