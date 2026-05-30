@@ -1,0 +1,42 @@
+# ---- Secrets (NEVER commit) ----
+Secrets.plist
+*.env
+.env*
+# Supabase service-role key / local config
+supabase/.env
+supabase/.branches
+supabase/.temp
+
+# ---- Xcode ----
+## User settings
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+## Build generated
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Swift Package Manager
+.build/
+.swiftpm/
+
+## CocoaPods (unused, but safe)
+Pods/
+
+## macOS
+.DS_Store
+
+# ---- Claude Code local config ----
+.claude/settings.local.json
+.claude/launch.json
+
+# ---- Unrelated personal scratch files ----
+heijnrich_chart.py
+heijnrich_contributions.png
+spending_breakdown.png

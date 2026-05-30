@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Someday — Design Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1a1a2e;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .screen-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .screen-label {
+    color: #aaa;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .iphone-frame {
+    width: 375px;
+    height: 812px;
+    background: #fff;
+    border-radius: 44px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 0 8px #111, 0 0 0 10px #333, 0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  .status-bar {
+    height: 54px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 0 30px 8px;
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 10;
+    position: relative;
+  }
+
+  .status-bar.light { color: #fff; }
+  .status-bar.dark { color: #222; }
+
+  .notch {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 150px;
+    height: 34px;
+    background: #111;
+    border-radius: 0 0 20px 20px;
+    z-index: 20;
+  }
+
+  .home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 134px;
+    height: 5px;
+    background: #222;
+    border-radius: 3px;
+    opacity: 0.3;
+    z-index: 10;
+  }
+
+  /* ===== SCREEN 1: SPLASH / AUTH ===== */
+  .screen-auth {
+    height: 100%;
+    background: linear-gradient(165deg, #2ECFCF 0%, #1A9E9E 50%, #0D7377 100%);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .auth-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 0 40px;
+    padding-bottom: 40px;
+  }
+
+  .auth-logo {
+    width: 80px;
+    height: 80px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(10px);
+  }
+
+  .auth-title {
+    font-size: 42px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+  }
+
+  .auth-subtitle {
+    font-size: 17px;
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+    line-height: 1.4;
+    margin-bottom: 60px;
+  }
+
+  .auth-buttons {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .btn-auth {
+    width: 100%;
+    padding: 16px;
+    border-radius: 14px;
+    border: none;
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: inherit;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+
+  .btn-auth:active { transform: scale(0.97); opacity: 0.9; }
+
+  .btn-google {
+    background: #fff;
+    color: #222;
+  }
+
+  .btn-email {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    backdrop-filter: blur(10px);
+    border: 1.5px solid rgba(255,255,255,0.3);
+  }
+
+  .btn-icon {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .auth-terms {
+    color: rgba(255,255,255,0.5);
+    font-size: 12px;
+    text-align: center;
+    margin-top: 20px;
+    line-height: 1.4;
+  }
+
+  .auth-terms a {
+    color: rgba(255,255,255,0.7);
+    text-decoration: underline;
+  }
+
+  .auth-signin {
+    color: rgba(255,255,255,0.7);
+    font-size: 15px;
+    margin-top: 24px;
+  }
+
+  .auth-signin a {
+    color: #fff;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  /* ===== SCREEN 2-4: ONBOARDING ===== */
+  .screen-onboarding {
+    height: 100%;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .onboarding-illustration {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 70px 30px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .onboarding-illustration.bg-social {
+    background: linear-gradient(180deg, #E0F7F7 0%, #fff 100%);
+  }
+  .onboarding-illustration.bg-friends {
+    background: linear-gradient(180deg, #FFF0E0 0%, #fff 100%);
+  }
+  .onboarding-illustration.bg-import {
+    background: linear-gradient(180deg, #E8E0FF 0%, #fff 100%);
+  }
+
+  .illustration-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .illust-icon {
+    width: 120px;
+    height: 120px;
+    border-radius: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 56px;
+  }
+
+  .illust-icon.social { background: rgba(46,207,207,0.15); }
+  .illust-icon.friends { background: rgba(255,149,0,0.15); }
+  .illust-icon.import { background: rgba(128,90,255,0.15); }
+
+  .illust-phone {
+    width: 180px;
+    height: 100px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .illust-mini-card {
+    width: 60px;
+    height: 70px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+  }
+
+  .onboarding-bottom {
+    padding: 24px 30px 50px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .onboarding-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #222;
+    text-align: center;
+    margin-bottom: 8px;
+    letter-spacing: -0.3px;
+  }
+
+  .onboarding-desc {
+    font-size: 16px;
+    color: #717171;
+    text-align: center;
+    line-height: 1.5;
+    margin-bottom: 28px;
+    max-width: 300px;
+  }
+
+  .dots {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ddd;
+  }
+
+  .dot.active {
+    background: #2ECFCF;
+    width: 24px;
+    border-radius: 4px;
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 16px;
+    border-radius: 14px;
+    border: none;
+    background: #2ECFCF;
+    color: #fff;
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: transform 0.15s ease;
+  }
+
+  .btn-primary:active { transform: scale(0.97); }
+
+  .skip-btn {
+    background: none;
+    border: none;
+    color: #717171;
+    font-size: 15px;
+    cursor: pointer;
+    margin-top: 12px;
+    font-family: inherit;
+  }
+
+  /* ===== SCREEN 5: MAP HOME ===== */
+  .screen-map {
+    height: 100%;
+    background: #e8e4d8;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .map-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(135deg, #e8e4d8 0%, #d4d0c4 100%);
+    overflow: hidden;
+  }
+
+  .map-road {
+    position: absolute;
+    background: #fff;
+    opacity: 0.6;
+  }
+  .road-h1 { width: 100%; height: 3px; top: 200px; }
+  .road-h2 { width: 100%; height: 5px; top: 400px; }
+  .road-h3 { width: 100%; height: 2px; top: 550px; }
+  .road-v1 { width: 4px; height: 100%; left: 100px; }
+  .road-v2 { width: 6px; height: 100%; left: 250px; }
+  .road-v3 { width: 3px; height: 100%; left: 340px; }
+  .road-d1 { width: 200%; height: 3px; top: 300px; left: -50px; transform: rotate(25deg); }
+
+  .map-block {
+    position: absolute;
+    background: #d9d5c9;
+    border-radius: 4px;
+  }
+
+  .map-search {
+    position: absolute;
+    top: 60px;
+    left: 16px;
+    right: 16px;
+    z-index: 5;
+    background: #fff;
+    border-radius: 28px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  }
+
+  .search-icon { color: #717171; font-size: 18px; }
+  .search-text { color: #717171; font-size: 16px; }
+
+  .map-pin {
+    position: absolute;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .pin-circle {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 3px solid #2ECFCF;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+
+  .pin-circle.friend { border-color: #FF9500; }
+  .pin-circle.social { border-color: #FF5A5F; }
+
+  .pin-tail {
+    width: 2px;
+    height: 8px;
+    background: #2ECFCF;
+    border-radius: 0 0 2px 2px;
+  }
+
+  .pin-tail.friend { background: #FF9500; }
+  .pin-tail.social { background: #FF5A5F; }
+
+  .pin-avatar {
+    position: absolute;
+    top: -4px;
+    right: -10px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    z-index: 1;
+  }
+
+  .pin-avatar.you { background: #2ECFCF; color: #fff; font-weight: 700; font-size: 9px; }
+  .pin-avatar.friend-a { background: #FFD9A0; }
+  .pin-avatar.friend-b { background: #A0D9FF; }
+  .pin-avatar.friend-c { background: #FFA0B4; }
+
+  .pin-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #222;
+    background: #fff;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-top: 2px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    white-space: nowrap;
+  }
+
+  .map-fab {
+    position: absolute;
+    bottom: 44px;
+    right: 20px;
+    z-index: 5;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #2ECFCF;
+    border: none;
+    color: #fff;
+    font-size: 28px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(46,207,207,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease;
+  }
+
+  .map-fab:active { transform: scale(0.9); }
+
+  /* ===== SCREEN 6: PLACE CARD ===== */
+  .place-card-sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: #fff;
+    border-radius: 20px 20px 0 0;
+    padding: 12px 20px 40px;
+    box-shadow: 0 -4px 30px rgba(0,0,0,0.12);
+  }
+
+  .sheet-handle {
+    width: 36px;
+    height: 4px;
+    background: #ddd;
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+
+  .place-card-image {
+    width: 100%;
+    height: 180px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #2ECFCF 0%, #1A9E9E 100%);
+    display: flex;
+    align-items: flex-end;
+    padding: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .place-card-image::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(transparent 50%, rgba(0,0,0,0.4));
+  }
+
+  .place-source-badge {
+    position: relative;
+    z-index: 1;
+    background: rgba(255,255,255,0.9);
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #222;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .place-card-info {
+    padding: 14px 0;
+  }
+
+  .place-card-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: #222;
+    margin-bottom: 4px;
+  }
+
+  .place-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #717171;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  .place-card-tags {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .tag {
+    background: #F7F7F7;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    color: #222;
+    font-weight: 500;
+  }
+
+  .place-card-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn-someday {
+    flex: 1;
+    padding: 14px;
+    border-radius: 14px;
+    border: none;
+    background: #2ECFCF;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .btn-directions {
+    padding: 14px 18px;
+    border-radius: 14px;
+    border: 1.5px solid #ddd;
+    background: #fff;
+    font-size: 16px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<!-- SCREEN 1: AUTH -->
+<div class="screen-container">
+  <span class="screen-label">1. Splash / Auth</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-auth">
+      <div class="status-bar light">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="auth-content">
+        <div class="auth-logo">📍</div>
+        <div class="auth-title">Someday</div>
+        <div class="auth-subtitle">Discover amazing places.<br>Save them for someday.</div>
+        <div class="auth-buttons">
+          <button class="btn-auth btn-google">
+            <span class="btn-icon">
+              <svg width="20" height="20" viewBox="0 0 20 20">
+                <path d="M19.8 10.2c0-.7-.1-1.4-.2-2H10v3.8h5.5c-.2 1.2-1 2.3-2.1 3v2.5h3.4c2-1.8 3-4.5 3-7.3z" fill="#4285F4"/>
+                <path d="M10 20c2.9 0 5.3-1 7-2.6l-3.4-2.6c-1 .6-2.2 1-3.6 1-2.8 0-5.1-1.9-6-4.4H.5v2.7C2.2 17.8 5.8 20 10 20z" fill="#34A853"/>
+                <path d="M4 11.4c-.2-.7-.4-1.4-.4-2.1s.1-1.5.4-2.1V4.4H.5C-.2 5.8-.5 7.4-.5 9s.3 3.2 1 4.6L4 11.4z" fill="#FBBC05"/>
+                <path d="M10 3.9c1.6 0 3 .5 4.1 1.6l3.1-3.1C15.3.9 12.9 0 10 0 5.8 0 2.2 2.2.5 5.4L4 8.1c.9-2.5 3.2-4.2 6-4.2z" fill="#EA4335"/>
+              </svg>
+            </span>
+            Continue with Google
+          </button>
+          <button class="btn-auth btn-email">
+            <span class="btn-icon">✉️</span>
+            Continue with Email
+          </button>
+        </div>
+        <div class="auth-terms">By continuing, you agree to our<br><a href="#">Terms of Service</a> & <a href="#">Privacy Policy</a></div>
+        <div class="auth-signin">Already have an account? <a href="#">Sign in</a></div>
+      </div>
+    </div>
+    <div class="home-indicator" style="background:#fff;opacity:0.4;"></div>
+  </div>
+</div>
+
+<!-- SCREEN 2: ONBOARDING 1 -->
+<div class="screen-container">
+  <span class="screen-label">2. Onboarding — Social</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-onboarding">
+      <div class="status-bar dark">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="onboarding-illustration bg-social">
+        <div class="illustration-content">
+          <div class="illust-icon social">📱</div>
+          <div class="illust-phone">
+            <div class="illust-mini-card" style="background:#E0F7F7;">📸</div>
+            <div style="font-size:24px;">→</div>
+            <div class="illust-mini-card" style="background:#E0F7F7;">📍</div>
+          </div>
+        </div>
+      </div>
+      <div class="onboarding-bottom">
+        <div class="onboarding-title">Share from Social</div>
+        <div class="onboarding-desc">Send Reels and TikToks directly to Someday. We'll find the place and pin it on your map.</div>
+        <div class="dots">
+          <div class="dot active"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+        <button class="btn-primary">Next</button>
+        <button class="skip-btn">Skip</button>
+      </div>
+    </div>
+    <div class="home-indicator"></div>
+  </div>
+</div>
+
+<!-- SCREEN 3: ONBOARDING 2 -->
+<div class="screen-container">
+  <span class="screen-label">3. Onboarding — Friends</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-onboarding">
+      <div class="status-bar dark">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="onboarding-illustration bg-friends">
+        <div class="illustration-content">
+          <div class="illust-icon friends">👥</div>
+          <div style="display:flex;gap:8px;">
+            <div style="width:48px;height:48px;border-radius:50%;background:#FFD9A0;display:flex;align-items:center;justify-content:center;font-size:22px;">😊</div>
+            <div style="width:48px;height:48px;border-radius:50%;background:#A0D9FF;display:flex;align-items:center;justify-content:center;font-size:22px;">😄</div>
+            <div style="width:48px;height:48px;border-radius:50%;background:#FFA0B4;display:flex;align-items:center;justify-content:center;font-size:22px;">🤩</div>
+          </div>
+        </div>
+      </div>
+      <div class="onboarding-bottom">
+        <div class="onboarding-title">Friend Recommendations</div>
+        <div class="onboarding-desc">Your close friends can suggest places they love. See their picks on your map.</div>
+        <div class="dots">
+          <div class="dot"></div>
+          <div class="dot active"></div>
+          <div class="dot"></div>
+        </div>
+        <button class="btn-primary">Next</button>
+        <button class="skip-btn">Skip</button>
+      </div>
+    </div>
+    <div class="home-indicator"></div>
+  </div>
+</div>
+
+<!-- SCREEN 4: ONBOARDING 3 -->
+<div class="screen-container">
+  <span class="screen-label">4. Onboarding — Import</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-onboarding">
+      <div class="status-bar dark">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="onboarding-illustration bg-import">
+        <div class="illustration-content">
+          <div class="illust-icon import">📋</div>
+          <div style="display:flex;gap:8px;">
+            <div style="padding:8px 14px;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.08);font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px;">
+              <span style="font-size:18px;">🗺️</span> Google Maps
+            </div>
+            <div style="padding:8px 14px;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.08);font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px;">
+              <span style="font-size:18px;">📄</span> CSV
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="onboarding-bottom">
+        <div class="onboarding-title">Import Your Lists</div>
+        <div class="onboarding-desc">Bring in your Google Maps saves and other lists. Populate your map instantly.</div>
+        <div class="dots">
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot active"></div>
+        </div>
+        <button class="btn-primary" style="background:#2ECFCF;">Let's go! 🎉</button>
+      </div>
+    </div>
+    <div class="home-indicator"></div>
+  </div>
+</div>
+
+<!-- SCREEN 5: MAP HOME -->
+<div class="screen-container">
+  <span class="screen-label">5. Map — Home</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-map">
+      <div class="status-bar dark" style="z-index:6;">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="map-bg">
+        <div class="map-road road-h1"></div>
+        <div class="map-road road-h2"></div>
+        <div class="map-road road-h3"></div>
+        <div class="map-road road-v1"></div>
+        <div class="map-road road-v2"></div>
+        <div class="map-road road-v3"></div>
+        <div class="map-road road-d1"></div>
+        <div class="map-block" style="top:120px;left:30px;width:60px;height:70px;"></div>
+        <div class="map-block" style="top:130px;left:120px;width:110px;height:60px;"></div>
+        <div class="map-block" style="top:230px;left:50px;width:40px;height:150px;"></div>
+        <div class="map-block" style="top:220px;left:270px;width:80px;height:80px;"></div>
+        <div class="map-block" style="top:430px;left:20px;width:70px;height:100px;"></div>
+        <div class="map-block" style="top:450px;left:150px;width:85px;height:80px;"></div>
+        <div class="map-block" style="top:580px;left:80px;width:60px;height:90px;"></div>
+        <div class="map-block" style="top:600px;left:260px;width:90px;height:60px;"></div>
+      </div>
+
+      <div class="map-search">
+        <span class="search-icon">🔍</span>
+        <span class="search-text">Where to someday?</span>
+      </div>
+
+      <!-- Pins -->
+      <div class="map-pin" style="top:180px;left:160px;">
+        <div style="position:relative;">
+          <div class="pin-circle">🍕</div>
+          <div class="pin-avatar you">P</div>
+        </div>
+        <div class="pin-tail"></div>
+        <div class="pin-label">Luigi's</div>
+      </div>
+
+      <div class="map-pin" style="top:300px;left:80px;">
+        <div style="position:relative;">
+          <div class="pin-circle social">🍣</div>
+          <div class="pin-avatar friend-a">😊</div>
+        </div>
+        <div class="pin-tail social"></div>
+        <div class="pin-label">Omakase Bar</div>
+      </div>
+
+      <div class="map-pin" style="top:260px;left:260px;">
+        <div style="position:relative;">
+          <div class="pin-circle friend">🍸</div>
+          <div class="pin-avatar friend-b">😄</div>
+        </div>
+        <div class="pin-tail friend"></div>
+        <div class="pin-label">Rooftop 22</div>
+      </div>
+
+      <div class="map-pin" style="top:450px;left:200px;">
+        <div style="position:relative;">
+          <div class="pin-circle">☕</div>
+          <div class="pin-avatar you">P</div>
+        </div>
+        <div class="pin-tail"></div>
+        <div class="pin-label">Brew & Co</div>
+      </div>
+
+      <div class="map-pin" style="top:520px;left:100px;">
+        <div style="position:relative;">
+          <div class="pin-circle friend">🥾</div>
+          <div class="pin-avatar friend-c">🤩</div>
+        </div>
+        <div class="pin-tail friend"></div>
+        <div class="pin-label">Sunset Trail</div>
+      </div>
+
+      <div class="map-pin" style="top:380px;left:300px;">
+        <div style="position:relative;">
+          <div class="pin-circle social">🎨</div>
+          <div class="pin-avatar friend-a">😊</div>
+        </div>
+        <div class="pin-tail social"></div>
+        <div class="pin-label">Art Space</div>
+      </div>
+
+      <button class="map-fab">+</button>
+    </div>
+    <div class="home-indicator"></div>
+  </div>
+</div>
+
+<!-- SCREEN 6: MAP + PLACE CARD -->
+<div class="screen-container">
+  <span class="screen-label">6. Place Card</span>
+  <div class="iphone-frame">
+    <div class="notch"></div>
+    <div class="screen-map" style="filter:brightness(0.92);">
+      <div class="status-bar dark" style="z-index:6;">
+        <span>9:41</span>
+        <span>●●● WiFi 🔋</span>
+      </div>
+      <div class="map-bg">
+        <div class="map-road road-h1"></div>
+        <div class="map-road road-h2"></div>
+        <div class="map-road road-v1"></div>
+        <div class="map-road road-v2"></div>
+        <div class="map-block" style="top:120px;left:30px;width:60px;height:70px;"></div>
+        <div class="map-block" style="top:130px;left:120px;width:110px;height:60px;"></div>
+      </div>
+      <div class="map-pin" style="top:180px;left:160px;">
+        <div class="pin-circle" style="border-color:#FF5A5F;transform:scale(1.15);">🍕</div>
+        <div class="pin-tail" style="background:#FF5A5F;"></div>
+      </div>
+      <div class="place-card-sheet">
+        <div class="sheet-handle"></div>
+        <div class="place-card-image">
+          <div class="place-source-badge">📸 from Instagram</div>
+        </div>
+        <div class="place-card-info">
+          <div class="place-card-name">Luigi's Pizzeria</div>
+          <div class="place-card-meta">
+            <span>🍕</span>
+            <span>Italian</span>
+            <span>•</span>
+            <span>Amsterdam Centrum</span>
+          </div>
+          <div class="place-card-tags">
+            <span class="tag">🔥 Date night</span>
+            <span class="tag">📸 Instagram</span>
+            <span class="tag">💰 €€</span>
+          </div>
+          <div class="place-card-actions">
+            <button class="btn-someday">Reservation</button>
+            <button class="btn-directions">🧭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="home-indicator" style="z-index:11;"></div>
+  </div>
+</div>
+
+</body>
+</html>

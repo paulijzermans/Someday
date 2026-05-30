@@ -1,0 +1,636 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00001 /* SomedayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00001 /* SomedayApp.swift */; };
+		A00002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00002 /* AppState.swift */; };
+		A00003 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00003 /* ServiceContainer.swift */; };
+		A00010 /* Place.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00010 /* Place.swift */; };
+		A00011 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00011 /* UserProfile.swift */; };
+		A00012 /* SampleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00012 /* SampleData.swift */; };
+		A00020 /* AuthServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00020 /* AuthServiceProtocol.swift */; };
+		A00021 /* PlaceServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00021 /* PlaceServiceProtocol.swift */; };
+		A00022 /* UserServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00022 /* UserServiceProtocol.swift */; };
+		A00023 /* LocationSearchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00023 /* LocationSearchProtocol.swift */; };
+		A00030 /* MockAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00030 /* MockAuthService.swift */; };
+		A00031 /* MockPlaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00031 /* MockPlaceService.swift */; };
+		A00032 /* MockUserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00032 /* MockUserService.swift */; };
+		A00033 /* MapKitSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00033 /* MapKitSearchService.swift */; };
+		A00040 /* SomedayColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00040 /* SomedayColors.swift */; };
+		A00034 /* SupabaseRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00034 /* SupabaseRows.swift */; };
+		A00035 /* SupabaseClientProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00035 /* SupabaseClientProvider.swift */; };
+		A00036 /* SupabaseAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00036 /* SupabaseAuthService.swift */; };
+		A00037 /* SupabasePlaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00037 /* SupabasePlaceService.swift */; };
+		A00038 /* SupabaseUserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00038 /* SupabaseUserService.swift */; };
+		A00041 /* SupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00041 /* SupabaseConfig.swift */; };
+		A00050 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00050 /* AuthView.swift */; };
+		A00051 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00051 /* AuthViewModel.swift */; };
+		A00060 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00060 /* OnboardingView.swift */; };
+		A00070 /* MapHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00070 /* MapHomeView.swift */; };
+		A00071 /* MapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00071 /* MapViewModel.swift */; };
+		A00072 /* PlacePinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00072 /* PlacePinView.swift */; };
+		A00073 /* PlaceCardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00073 /* PlaceCardSheet.swift */; };
+		A00074 /* ClusteredMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00074 /* ClusteredMapView.swift */; };
+		A00075 /* ImportListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00075 /* ImportListView.swift */; };
+		A00080 /* ReservationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00080 /* ReservationView.swift */; };
+		A00090 /* FriendsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00090 /* FriendsListView.swift */; };
+		A00091 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00091 /* ActivityView.swift */; };
+		A00100 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00100 /* Assets.xcassets */; };
+		A00101 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00101 /* Preview Assets.xcassets */; };
+		A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */ = {isa = PBXBuildFile; fileRef = F00110 /* Resources/Fonts/Gondens-DEMO.otf */; };
+		B00001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = P00002 /* Supabase */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F00001 /* SomedayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SomedayApp.swift; sourceTree = "<group>"; };
+		F00002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		F00003 /* ServiceContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceContainer.swift; sourceTree = "<group>"; };
+		F00010 /* Place.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Place.swift; sourceTree = "<group>"; };
+		F00011 /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfile.swift; sourceTree = "<group>"; };
+		F00012 /* SampleData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleData.swift; sourceTree = "<group>"; };
+		F00020 /* AuthServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthServiceProtocol.swift; sourceTree = "<group>"; };
+		F00021 /* PlaceServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceServiceProtocol.swift; sourceTree = "<group>"; };
+		F00022 /* UserServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserServiceProtocol.swift; sourceTree = "<group>"; };
+		F00023 /* LocationSearchProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSearchProtocol.swift; sourceTree = "<group>"; };
+		F00030 /* MockAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAuthService.swift; sourceTree = "<group>"; };
+		F00031 /* MockPlaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockPlaceService.swift; sourceTree = "<group>"; };
+		F00032 /* MockUserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockUserService.swift; sourceTree = "<group>"; };
+		F00033 /* MapKitSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapKitSearchService.swift; sourceTree = "<group>"; };
+		F00040 /* SomedayColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SomedayColors.swift; sourceTree = "<group>"; };
+		F00034 /* SupabaseRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseRows.swift; sourceTree = "<group>"; };
+		F00035 /* SupabaseClientProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClientProvider.swift; sourceTree = "<group>"; };
+		F00036 /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
+		F00037 /* SupabasePlaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabasePlaceService.swift; sourceTree = "<group>"; };
+		F00038 /* SupabaseUserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseUserService.swift; sourceTree = "<group>"; };
+		F00041 /* SupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseConfig.swift; sourceTree = "<group>"; };
+		F00050 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
+		F00051 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		F00060 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		F00070 /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
+		F00071 /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
+		F00072 /* PlacePinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacePinView.swift; sourceTree = "<group>"; };
+		F00073 /* PlaceCardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceCardSheet.swift; sourceTree = "<group>"; };
+		F00074 /* ClusteredMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusteredMapView.swift; sourceTree = "<group>"; };
+		F00075 /* ImportListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportListView.swift; sourceTree = "<group>"; };
+		F00080 /* ReservationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationView.swift; sourceTree = "<group>"; };
+		F00090 /* FriendsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendsListView.swift; sourceTree = "<group>"; };
+		F00091 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
+		F00100 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F00101 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		F00110 /* Resources/Fonts/Gondens-DEMO.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/Fonts/Gondens-DEMO.otf"; sourceTree = "<group>"; };
+		F99999 /* Someday.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Someday.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C00001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00001 /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		P00001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		P00002 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = P00001 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+/* Begin PBXGroup section */
+		D00001 = {
+			isa = PBXGroup;
+			children = (
+				D00002 /* Someday */,
+				D99999 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D00002 /* Someday */ = {
+			isa = PBXGroup;
+			children = (
+				D00003 /* App */,
+				D00004 /* Core */,
+				D00005 /* Features */,
+				F00100 /* Assets.xcassets */,
+				F00110 /* Resources/Fonts/Gondens-DEMO.otf */,
+				D00099 /* Preview Content */,
+			);
+			path = Someday;
+			sourceTree = "<group>";
+		};
+		D00003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F00001 /* SomedayApp.swift */,
+				F00002 /* AppState.swift */,
+				F00003 /* ServiceContainer.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D00004 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				D00010 /* Models */,
+				D00020 /* Protocols */,
+				D00030 /* Services */,
+				D00040 /* Theme */,
+				D00041 /* Config */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		D00005 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				D00050 /* Auth */,
+				D00060 /* Onboarding */,
+				D00070 /* Map */,
+				D00080 /* Reservation */,
+				D00090 /* Friends */,
+				D00091 /* Activity */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		D00010 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F00010 /* Place.swift */,
+				F00011 /* UserProfile.swift */,
+				F00012 /* SampleData.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		D00020 /* Protocols */ = {
+			isa = PBXGroup;
+			children = (
+				F00020 /* AuthServiceProtocol.swift */,
+				F00021 /* PlaceServiceProtocol.swift */,
+				F00022 /* UserServiceProtocol.swift */,
+				F00023 /* LocationSearchProtocol.swift */,
+			);
+			path = Protocols;
+			sourceTree = "<group>";
+		};
+		D00030 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				D00031 /* Mock */,
+				D00034 /* Supabase */,
+				F00033 /* MapKitSearchService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		D00034 /* Supabase */ = {
+			isa = PBXGroup;
+			children = (
+				F00034 /* SupabaseRows.swift */,
+				F00035 /* SupabaseClientProvider.swift */,
+				F00036 /* SupabaseAuthService.swift */,
+				F00037 /* SupabasePlaceService.swift */,
+				F00038 /* SupabaseUserService.swift */,
+			);
+			path = Supabase;
+			sourceTree = "<group>";
+		};
+		D00031 /* Mock */ = {
+			isa = PBXGroup;
+			children = (
+				F00030 /* MockAuthService.swift */,
+				F00031 /* MockPlaceService.swift */,
+				F00032 /* MockUserService.swift */,
+			);
+			path = Mock;
+			sourceTree = "<group>";
+		};
+		D00040 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				F00040 /* SomedayColors.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		D00041 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				F00041 /* SupabaseConfig.swift */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		D00050 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				F00050 /* AuthView.swift */,
+				F00051 /* AuthViewModel.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		D00060 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				F00060 /* OnboardingView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
+		D00070 /* Map */ = {
+			isa = PBXGroup;
+			children = (
+				F00070 /* MapHomeView.swift */,
+				F00071 /* MapViewModel.swift */,
+				F00072 /* PlacePinView.swift */,
+				F00073 /* PlaceCardSheet.swift */,
+				F00074 /* ClusteredMapView.swift */,
+				F00075 /* ImportListView.swift */,
+			);
+			path = Map;
+			sourceTree = "<group>";
+		};
+		D00080 /* Reservation */ = {
+			isa = PBXGroup;
+			children = (
+				F00080 /* ReservationView.swift */,
+			);
+			path = Reservation;
+			sourceTree = "<group>";
+		};
+		D00090 /* Friends */ = {
+			isa = PBXGroup;
+			children = (
+				F00090 /* FriendsListView.swift */,
+			);
+			path = Friends;
+			sourceTree = "<group>";
+		};
+		D00091 /* Activity */ = {
+			isa = PBXGroup;
+			children = (
+				F00091 /* ActivityView.swift */,
+			);
+			path = Activity;
+			sourceTree = "<group>";
+		};
+		D00099 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				F00101 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		D99999 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F99999 /* Someday.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E00001 /* Someday */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = X00003 /* Build configuration list for PBXNativeTarget "Someday" */;
+			buildPhases = (
+				C00002 /* Sources */,
+				C00001 /* Frameworks */,
+				C00003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Someday;
+			packageProductDependencies = (
+				P00002 /* Supabase */,
+			);
+			productName = Someday;
+			productReference = F99999 /* Someday.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E99999 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1620;
+				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					E00001 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+				};
+			};
+			buildConfigurationList = X00001 /* Build configuration list for PBXProject "Someday" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = D00001;
+			packageReferences = (
+				P00001 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
+			productRefGroup = D99999 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E00001 /* Someday */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C00003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00100 /* Assets.xcassets in Resources */,
+				A00101 /* Preview Assets.xcassets in Resources */,
+				A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C00002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00001 /* SomedayApp.swift in Sources */,
+				A00002 /* AppState.swift in Sources */,
+				A00003 /* ServiceContainer.swift in Sources */,
+				A00010 /* Place.swift in Sources */,
+				A00011 /* UserProfile.swift in Sources */,
+				A00012 /* SampleData.swift in Sources */,
+				A00020 /* AuthServiceProtocol.swift in Sources */,
+				A00021 /* PlaceServiceProtocol.swift in Sources */,
+				A00022 /* UserServiceProtocol.swift in Sources */,
+				A00023 /* LocationSearchProtocol.swift in Sources */,
+				A00030 /* MockAuthService.swift in Sources */,
+				A00031 /* MockPlaceService.swift in Sources */,
+				A00032 /* MockUserService.swift in Sources */,
+				A00033 /* MapKitSearchService.swift in Sources */,
+				A00040 /* SomedayColors.swift in Sources */,
+				A00034 /* SupabaseRows.swift in Sources */,
+				A00035 /* SupabaseClientProvider.swift in Sources */,
+				A00036 /* SupabaseAuthService.swift in Sources */,
+				A00037 /* SupabasePlaceService.swift in Sources */,
+				A00038 /* SupabaseUserService.swift in Sources */,
+				A00041 /* SupabaseConfig.swift in Sources */,
+				A00050 /* AuthView.swift in Sources */,
+				A00051 /* AuthViewModel.swift in Sources */,
+				A00060 /* OnboardingView.swift in Sources */,
+				A00070 /* MapHomeView.swift in Sources */,
+				A00071 /* MapViewModel.swift in Sources */,
+				A00072 /* PlacePinView.swift in Sources */,
+				A00073 /* PlaceCardSheet.swift in Sources */,
+				A00074 /* ClusteredMapView.swift in Sources */,
+				A00075 /* ImportListView.swift in Sources */,
+				A00080 /* ReservationView.swift in Sources */,
+				A00090 /* FriendsListView.swift in Sources */,
+				A00091 /* ActivityView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		G00001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+			};
+			name = Debug;
+		};
+		G00002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		G00003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Someday/Preview Content\"";
+				DEVELOPMENT_TEAM = 6N56RFYW7M;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIAppFonts = "Gondens-DEMO.otf";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.paulijzermans.someday;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		G00004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Someday/Preview Content\"";
+				DEVELOPMENT_TEAM = 6N56RFYW7M;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIAppFonts = "Gondens-DEMO.otf";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.paulijzermans.someday;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		X00001 /* Build configuration list for PBXProject "Someday" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				G00001 /* Debug */,
+				G00002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		X00003 /* Build configuration list for PBXNativeTarget "Someday" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				G00003 /* Debug */,
+				G00004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E99999 /* Project object */;
+}
