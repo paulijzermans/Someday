@@ -224,11 +224,11 @@ struct FriendTile: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ListPill(label: "All", isSelected: selectedList == nil) {
-                                    withAnimation(.spring(response: 0.3)) { selectedList = nil }
+                                    withAnimation(SomedayAnimations.followCTA) { selectedList = nil }
                                 }
                                 ForEach(listNames, id: \.self) { name in
                                     ListPill(label: name, isSelected: selectedList == name) {
-                                        withAnimation(.spring(response: 0.3)) {
+                                        withAnimation(SomedayAnimations.followCTA) {
                                             selectedList = selectedList == name ? nil : name
                                         }
                                     }

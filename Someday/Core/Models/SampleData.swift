@@ -17,10 +17,46 @@ enum SampleData {
         UserProfile(id: "user_noah", name: "Noah", email: "noah@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=53"), friendIDs: ["user_paul"], lists: ["Vegan": ["place_4", "place_5"]]),
     ]
 
+    /// A specific friend who's sharing a list with you on first launch.
+    /// Surfaced as a one-off "share request" tile that drops the user
+    /// straight into list-preview mode when they tap Preview.
+    static let bodil = UserProfile(
+        id: "user_bodil",
+        name: "Bodil",
+        email: "bodil@example.com",
+        // TODO: swap for a local asset once Bodil's actual photo is in
+        // Assets.xcassets — drop a `BodilAvatar.imageset` in there and
+        // route the avatar render through Image("BodilAvatar").
+        avatarURL: URL(string: "https://i.pravatar.cc/300?img=44"),
+        friendIDs: ["user_paul"],
+        lists: [
+            "Amsterdam": ["place_1", "place_3", "place_4", "place_7", "place_8", "place_9"]
+        ]
+    )
+
     /// People who follow you but you don't follow back yet — surfaced in the Activity feed.
     static let pendingFollowers: [UserProfile] = [
-        UserProfile(id: "user_wouter", name: "Wouter", email: "wouter@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=33")),
-        UserProfile(id: "user_julia", name: "Julia", email: "julia@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=47")),
+        UserProfile(
+            id: "user_wouter",
+            name: "Wouter",
+            email: "wouter@example.com",
+            avatarURL: URL(string: "https://i.pravatar.cc/150?img=33"),
+            lists: [
+                "Lisbon": ["place_2", "place_3", "place_5"],
+                "Brunch": ["place_4", "place_7"],
+                "Bookshops": ["place_6"]
+            ]
+        ),
+        UserProfile(
+            id: "user_julia",
+            name: "Julia",
+            email: "julia@example.com",
+            avatarURL: URL(string: "https://i.pravatar.cc/150?img=47"),
+            lists: [
+                "Wine bars": ["place_3", "place_11", "place_12"],
+                "Hidden gems": ["place_4", "place_9"]
+            ]
+        ),
     ]
 
     static let places: [Place] = [

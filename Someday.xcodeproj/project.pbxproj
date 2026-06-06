@@ -22,15 +22,18 @@
 		A00032 /* MockUserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00032 /* MockUserService.swift */; };
 		A00033 /* MapKitSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00033 /* MapKitSearchService.swift */; };
 		A00040 /* SomedayColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00040 /* SomedayColors.swift */; };
+		A00043 /* TileStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00043 /* TileStyle.swift */; };
+		A00044 /* SomedayAnimations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00044 /* SomedayAnimations.swift */; };
 		A00034 /* SupabaseRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00034 /* SupabaseRows.swift */; };
 		A00035 /* SupabaseClientProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00035 /* SupabaseClientProvider.swift */; };
 		A00036 /* SupabaseAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00036 /* SupabaseAuthService.swift */; };
 		A00037 /* SupabasePlaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00037 /* SupabasePlaceService.swift */; };
 		A00038 /* SupabaseUserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00038 /* SupabaseUserService.swift */; };
 		A00041 /* SupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00041 /* SupabaseConfig.swift */; };
+		A00042 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = F00042 /* Secrets.plist */; };
 		A00050 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00050 /* AuthView.swift */; };
 		A00051 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00051 /* AuthViewModel.swift */; };
-		A00060 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00060 /* OnboardingView.swift */; };
+		A00060 /* OnboardingFlowTile.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00060 /* OnboardingFlowTile.swift */; };
 		A00070 /* MapHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00070 /* MapHomeView.swift */; };
 		A00071 /* MapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00071 /* MapViewModel.swift */; };
 		A00072 /* PlacePinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00072 /* PlacePinView.swift */; };
@@ -40,6 +43,33 @@
 		A00080 /* ReservationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00080 /* ReservationView.swift */; };
 		A00090 /* FriendsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00090 /* FriendsListView.swift */; };
 		A00091 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00091 /* ActivityView.swift */; };
+		A00092 /* ListsGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00092 /* ListsGridView.swift */; };
+		A00099 /* CreateListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00099 /* CreateListView.swift */; };
+		A00102 /* MapSubcomponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00102 /* MapSubcomponents.swift */; };
+		A00093 /* AddSourcesTileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00093 /* AddSourcesTileView.swift */; };
+		A00094 /* LinkImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00094 /* LinkImportView.swift */; };
+		A00095 /* FeedbackTileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00095 /* FeedbackTileView.swift */; };
+		A00097 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00097 /* ProfileView.swift */; };
+		A00098 /* ImportSummaryCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00098 /* ImportSummaryCardView.swift */; };
+		A00200 /* URLExtractionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00200 /* URLExtractionService.swift */; };
+		A00201 /* ExtractionPipelineSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00201 /* ExtractionPipelineSelector.swift */; };
+		A00202 /* ExtractorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00202 /* ExtractorConfig.swift */; };
+		A00203 /* Pipeline1Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00203 /* Pipeline1Service.swift */; };
+		A00204 /* Pipeline2Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00204 /* Pipeline2Service.swift */; };
+		A00205 /* ExtractionRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00205 /* ExtractionRouter.swift */; };
+		A00210 /* AvailabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00210 /* AvailabilityService.swift */; };
+		A00250 /* ReservationCheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00250 /* ReservationCheckService.swift */; };
+		A00260 /* ContactsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00260 /* ContactsService.swift */; };
+		A00211 /* AIAvailabilityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00211 /* AIAvailabilityBar.swift */; };
+		A00220 /* ListServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00220 /* ListServiceProtocol.swift */; };
+		A00221 /* SupabaseListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00221 /* SupabaseListService.swift */; };
+		A00222 /* MockListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00222 /* MockListService.swift */; };
+		A00230 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00230 /* Haptics.swift */; };
+		A00240 /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00240 /* ChatService.swift */; };
+		A00241 /* ChatSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00241 /* ChatSheet.swift */; };
+		BS001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FS001 /* ShareViewController.swift */; };
+		BS002 /* SomedayShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = FS003 /* SomedayShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A00096 /* ShareRequestTileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00096 /* ShareRequestTileView.swift */; };
 		A00100 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00100 /* Assets.xcassets */; };
 		A00101 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00101 /* Preview Assets.xcassets */; };
 		A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */ = {isa = PBXBuildFile; fileRef = F00110 /* Resources/Fonts/Gondens-DEMO.otf */; };
@@ -62,15 +92,18 @@
 		F00032 /* MockUserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockUserService.swift; sourceTree = "<group>"; };
 		F00033 /* MapKitSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapKitSearchService.swift; sourceTree = "<group>"; };
 		F00040 /* SomedayColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SomedayColors.swift; sourceTree = "<group>"; };
+		F00043 /* TileStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileStyle.swift; sourceTree = "<group>"; };
+		F00044 /* SomedayAnimations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SomedayAnimations.swift; sourceTree = "<group>"; };
 		F00034 /* SupabaseRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseRows.swift; sourceTree = "<group>"; };
 		F00035 /* SupabaseClientProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClientProvider.swift; sourceTree = "<group>"; };
 		F00036 /* SupabaseAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseAuthService.swift; sourceTree = "<group>"; };
 		F00037 /* SupabasePlaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabasePlaceService.swift; sourceTree = "<group>"; };
 		F00038 /* SupabaseUserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseUserService.swift; sourceTree = "<group>"; };
 		F00041 /* SupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseConfig.swift; sourceTree = "<group>"; };
+		F00042 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
 		F00050 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		F00051 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
-		F00060 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		F00060 /* OnboardingFlowTile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowTile.swift; sourceTree = "<group>"; };
 		F00070 /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
 		F00071 /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
 		F00072 /* PlacePinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacePinView.swift; sourceTree = "<group>"; };
@@ -80,9 +113,39 @@
 		F00080 /* ReservationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationView.swift; sourceTree = "<group>"; };
 		F00090 /* FriendsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FriendsListView.swift; sourceTree = "<group>"; };
 		F00091 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
+		F00092 /* ListsGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListsGridView.swift; sourceTree = "<group>"; };
+		F00099 /* CreateListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateListView.swift; sourceTree = "<group>"; };
+		F00102 /* MapSubcomponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSubcomponents.swift; sourceTree = "<group>"; };
+		F00093 /* AddSourcesTileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSourcesTileView.swift; sourceTree = "<group>"; };
+		F00094 /* LinkImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkImportView.swift; sourceTree = "<group>"; };
+		F00095 /* FeedbackTileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackTileView.swift; sourceTree = "<group>"; };
+		F00097 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		F00098 /* ImportSummaryCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportSummaryCardView.swift; sourceTree = "<group>"; };
+		F00200 /* URLExtractionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLExtractionService.swift; sourceTree = "<group>"; };
+		F00201 /* ExtractionPipelineSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractionPipelineSelector.swift; sourceTree = "<group>"; };
+		F00202 /* ExtractorConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractorConfig.swift; sourceTree = "<group>"; };
+		F00203 /* Pipeline1Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pipeline1Service.swift; sourceTree = "<group>"; };
+		F00204 /* Pipeline2Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pipeline2Service.swift; sourceTree = "<group>"; };
+		F00205 /* ExtractionRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractionRouter.swift; sourceTree = "<group>"; };
+		F00210 /* AvailabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityService.swift; sourceTree = "<group>"; };
+		F00250 /* ReservationCheckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationCheckService.swift; sourceTree = "<group>"; };
+		F00260 /* ContactsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsService.swift; sourceTree = "<group>"; };
+		D00260 /* Friends */ = {isa = PBXGroup; children = (F00260 /* ContactsService.swift */,); path = Friends; sourceTree = "<group>"; };
+		F00211 /* AIAvailabilityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAvailabilityBar.swift; sourceTree = "<group>"; };
+		F00220 /* ListServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListServiceProtocol.swift; sourceTree = "<group>"; };
+		F00221 /* SupabaseListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseListService.swift; sourceTree = "<group>"; };
+		F00222 /* MockListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockListService.swift; sourceTree = "<group>"; };
+		F00230 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
+		F00240 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
+		F00241 /* ChatSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSheet.swift; sourceTree = "<group>"; };
+		F00096 /* ShareRequestTileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareRequestTileView.swift; sourceTree = "<group>"; };
 		F00100 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00101 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		F00110 /* Resources/Fonts/Gondens-DEMO.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/Fonts/Gondens-DEMO.otf"; sourceTree = "<group>"; };
+		F00120 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FS001 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		FS002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FS003 /* SomedayShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SomedayShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F99999 /* Someday.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Someday.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -95,7 +158,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CS002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CS010 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BS002 /* SomedayShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		TS100 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E99999 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ES002;
+			remoteInfo = SomedayShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		TS001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ES002 /* SomedayShareExtension */;
+			targetProxy = TS100 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		P00001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
@@ -121,8 +223,18 @@
 			isa = PBXGroup;
 			children = (
 				D00002 /* Someday */,
+				DS001 /* SomedayShareExtension */,
 				D99999 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		DS001 /* SomedayShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				FS001 /* ShareViewController.swift */,
+				FS002 /* Info.plist */,
+			);
+			path = SomedayShareExtension;
 			sourceTree = "<group>";
 		};
 		D00002 /* Someday */ = {
@@ -133,6 +245,7 @@
 				D00005 /* Features */,
 				F00100 /* Assets.xcassets */,
 				F00110 /* Resources/Fonts/Gondens-DEMO.otf */,
+				F00120 /* Info.plist */,
 				D00099 /* Preview Content */,
 			);
 			path = Someday;
@@ -169,8 +282,22 @@
 				D00080 /* Reservation */,
 				D00090 /* Friends */,
 				D00091 /* Activity */,
+				D00092 /* Lists */,
+				D00093 /* AddPlace */,
+				D00094 /* Feedback */,
+				D00095 /* ShareRequest */,
+				D00096 /* Profile */,
+				D00241 /* Chat */,
 			);
 			path = Features;
+			sourceTree = "<group>";
+		};
+		D00241 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				F00241 /* ChatSheet.swift */,
+			);
+			path = Chat;
 			sourceTree = "<group>";
 		};
 		D00010 /* Models */ = {
@@ -190,6 +317,7 @@
 				F00021 /* PlaceServiceProtocol.swift */,
 				F00022 /* UserServiceProtocol.swift */,
 				F00023 /* LocationSearchProtocol.swift */,
+				F00220 /* ListServiceProtocol.swift */,
 			);
 			path = Protocols;
 			sourceTree = "<group>";
@@ -199,9 +327,43 @@
 			children = (
 				D00031 /* Mock */,
 				D00034 /* Supabase */,
+				D00200 /* Extraction */,
+				D00210 /* Reservation */,
+				D00240 /* Chat */,
+				D00260 /* Friends */,
 				F00033 /* MapKitSearchService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		D00240 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				F00240 /* ChatService.swift */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		D00210 /* Reservation */ = {
+			isa = PBXGroup;
+			children = (
+				F00210 /* AvailabilityService.swift */,
+				F00250 /* ReservationCheckService.swift */,
+			);
+			path = Reservation;
+			sourceTree = "<group>";
+		};
+		D00200 /* Extraction */ = {
+			isa = PBXGroup;
+			children = (
+				F00200 /* URLExtractionService.swift */,
+				F00201 /* ExtractionPipelineSelector.swift */,
+				F00202 /* ExtractorConfig.swift */,
+				F00203 /* Pipeline1Service.swift */,
+				F00204 /* Pipeline2Service.swift */,
+				F00205 /* ExtractionRouter.swift */,
+			);
+			path = Extraction;
 			sourceTree = "<group>";
 		};
 		D00034 /* Supabase */ = {
@@ -212,6 +374,7 @@
 				F00036 /* SupabaseAuthService.swift */,
 				F00037 /* SupabasePlaceService.swift */,
 				F00038 /* SupabaseUserService.swift */,
+				F00221 /* SupabaseListService.swift */,
 			);
 			path = Supabase;
 			sourceTree = "<group>";
@@ -222,6 +385,7 @@
 				F00030 /* MockAuthService.swift */,
 				F00031 /* MockPlaceService.swift */,
 				F00032 /* MockUserService.swift */,
+				F00222 /* MockListService.swift */,
 			);
 			path = Mock;
 			sourceTree = "<group>";
@@ -230,6 +394,9 @@
 			isa = PBXGroup;
 			children = (
 				F00040 /* SomedayColors.swift */,
+				F00043 /* TileStyle.swift */,
+				F00044 /* SomedayAnimations.swift */,
+				F00230 /* Haptics.swift */,
 			);
 			path = Theme;
 			sourceTree = "<group>";
@@ -238,6 +405,7 @@
 			isa = PBXGroup;
 			children = (
 				F00041 /* SupabaseConfig.swift */,
+				F00042 /* Secrets.plist */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -254,7 +422,7 @@
 		D00060 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
-				F00060 /* OnboardingView.swift */,
+				F00060 /* OnboardingFlowTile.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -268,6 +436,7 @@
 				F00073 /* PlaceCardSheet.swift */,
 				F00074 /* ClusteredMapView.swift */,
 				F00075 /* ImportListView.swift */,
+				F00102 /* MapSubcomponents.swift */,
 			);
 			path = Map;
 			sourceTree = "<group>";
@@ -276,6 +445,7 @@
 			isa = PBXGroup;
 			children = (
 				F00080 /* ReservationView.swift */,
+				F00211 /* AIAvailabilityBar.swift */,
 			);
 			path = Reservation;
 			sourceTree = "<group>";
@@ -296,6 +466,49 @@
 			path = Activity;
 			sourceTree = "<group>";
 		};
+		D00092 /* Lists */ = {
+			isa = PBXGroup;
+			children = (
+				F00092 /* ListsGridView.swift */,
+				F00099 /* CreateListView.swift */,
+			);
+			path = Lists;
+			sourceTree = "<group>";
+		};
+		D00093 /* AddPlace */ = {
+			isa = PBXGroup;
+			children = (
+				F00093 /* AddSourcesTileView.swift */,
+				F00094 /* LinkImportView.swift */,
+				F00098 /* ImportSummaryCardView.swift */,
+			);
+			path = AddPlace;
+			sourceTree = "<group>";
+		};
+		D00094 /* Feedback */ = {
+			isa = PBXGroup;
+			children = (
+				F00095 /* FeedbackTileView.swift */,
+			);
+			path = Feedback;
+			sourceTree = "<group>";
+		};
+		D00095 /* ShareRequest */ = {
+			isa = PBXGroup;
+			children = (
+				F00096 /* ShareRequestTileView.swift */,
+			);
+			path = ShareRequest;
+			sourceTree = "<group>";
+		};
+		D00096 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				F00097 /* ProfileView.swift */,
+			);
+			path = Profile;
+			sourceTree = "<group>";
+		};
 		D00099 /* Preview Content */ = {
 			isa = PBXGroup;
 			children = (
@@ -308,6 +521,7 @@
 			isa = PBXGroup;
 			children = (
 				F99999 /* Someday.app */,
+				FS003 /* SomedayShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -322,10 +536,12 @@
 				C00002 /* Sources */,
 				C00001 /* Frameworks */,
 				C00003 /* Resources */,
+				CS010 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				TS001 /* PBXTargetDependency */,
 			);
 			name = Someday;
 			packageProductDependencies = (
@@ -334,6 +550,23 @@
 			productName = Someday;
 			productReference = F99999 /* Someday.app */;
 			productType = "com.apple.product-type.application";
+		};
+		ES002 /* SomedayShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = XS001 /* Build configuration list for PBXNativeTarget "SomedayShareExtension" */;
+			buildPhases = (
+				CS001 /* Sources */,
+				CS002 /* Frameworks */,
+				CS003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SomedayShareExtension;
+			productName = SomedayShareExtension;
+			productReference = FS003 /* SomedayShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -346,6 +579,9 @@
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
 					E00001 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					ES002 = {
 						CreatedOnToolsVersion = 16.2;
 					};
 				};
@@ -367,6 +603,7 @@
 			projectRoot = "";
 			targets = (
 				E00001 /* Someday */,
+				ES002 /* SomedayShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -379,6 +616,14 @@
 				A00100 /* Assets.xcassets in Resources */,
 				A00101 /* Preview Assets.xcassets in Resources */,
 				A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */,
+				A00042 /* Secrets.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CS003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -404,6 +649,8 @@
 				A00032 /* MockUserService.swift in Sources */,
 				A00033 /* MapKitSearchService.swift in Sources */,
 				A00040 /* SomedayColors.swift in Sources */,
+				A00043 /* TileStyle.swift in Sources */,
+				A00044 /* SomedayAnimations.swift in Sources */,
 				A00034 /* SupabaseRows.swift in Sources */,
 				A00035 /* SupabaseClientProvider.swift in Sources */,
 				A00036 /* SupabaseAuthService.swift in Sources */,
@@ -412,7 +659,7 @@
 				A00041 /* SupabaseConfig.swift in Sources */,
 				A00050 /* AuthView.swift in Sources */,
 				A00051 /* AuthViewModel.swift in Sources */,
-				A00060 /* OnboardingView.swift in Sources */,
+				A00060 /* OnboardingFlowTile.swift in Sources */,
 				A00070 /* MapHomeView.swift in Sources */,
 				A00071 /* MapViewModel.swift in Sources */,
 				A00072 /* PlacePinView.swift in Sources */,
@@ -422,6 +669,39 @@
 				A00080 /* ReservationView.swift in Sources */,
 				A00090 /* FriendsListView.swift in Sources */,
 				A00091 /* ActivityView.swift in Sources */,
+				A00092 /* ListsGridView.swift in Sources */,
+				A00099 /* CreateListView.swift in Sources */,
+				A00102 /* MapSubcomponents.swift in Sources */,
+				A00093 /* AddSourcesTileView.swift in Sources */,
+				A00094 /* LinkImportView.swift in Sources */,
+				A00095 /* FeedbackTileView.swift in Sources */,
+				A00096 /* ShareRequestTileView.swift in Sources */,
+				A00097 /* ProfileView.swift in Sources */,
+				A00098 /* ImportSummaryCardView.swift in Sources */,
+				A00200 /* URLExtractionService.swift in Sources */,
+				A00201 /* ExtractionPipelineSelector.swift in Sources */,
+				A00202 /* ExtractorConfig.swift in Sources */,
+				A00203 /* Pipeline1Service.swift in Sources */,
+				A00204 /* Pipeline2Service.swift in Sources */,
+				A00205 /* ExtractionRouter.swift in Sources */,
+				A00210 /* AvailabilityService.swift in Sources */,
+				A00250 /* ReservationCheckService.swift in Sources */,
+				A00260 /* ContactsService.swift in Sources */,
+				A00211 /* AIAvailabilityBar.swift in Sources */,
+				A00220 /* ListServiceProtocol.swift in Sources */,
+				A00221 /* SupabaseListService.swift in Sources */,
+				A00222 /* MockListService.swift in Sources */,
+				A00230 /* Haptics.swift in Sources */,
+				A00240 /* ChatService.swift in Sources */,
+				A00241 /* ChatSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CS001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BS001 /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -559,13 +839,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Someday/Preview Content\"";
 				DEVELOPMENT_TEAM = 6N56RFYW7M;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIAppFonts = "Gondens-DEMO.otf";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Someday/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -589,13 +864,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Someday/Preview Content\"";
 				DEVELOPMENT_TEAM = 6N56RFYW7M;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIAppFonts = "Gondens-DEMO.otf";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Someday/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -603,6 +873,54 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.paulijzermans.someday;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		GS001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6N56RFYW7M;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SomedayShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.paulijzermans.someday.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		GS002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6N56RFYW7M;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SomedayShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.paulijzermans.someday.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -626,6 +944,15 @@
 			buildConfigurations = (
 				G00003 /* Debug */,
 				G00004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		XS001 /* Build configuration list for PBXNativeTarget "SomedayShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				GS001 /* Debug */,
+				GS002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

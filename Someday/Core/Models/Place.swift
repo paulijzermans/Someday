@@ -5,6 +5,14 @@ struct Place: Identifiable, Codable, Hashable {
     let id: String
     var name: String
     var category: PlaceCategory
+    /// What kind of geographic thing this is.
+    ///   • `.venue`  — a single bookable / visitable place (default).
+    ///   • `.region` — a country, city, or area returned by an import
+    ///                  whose coordinates aren't a real venue. Surfaced
+    ///                  by `ImportSummaryCardView` with a "this is not
+    ///                  a single place" notice rather than treated as a
+    ///                  real pin to drop on the map.
+    var kind: PlaceKind = .venue
     var latitude: Double
     var longitude: Double
     var source: PlaceSource
@@ -17,6 +25,17 @@ struct Place: Identifiable, Codable, Hashable {
     var friendRatings: [String: Double]
     var createdAt: Date
     var ownerID: String
+    /// Thumbnail URL surfaced by an import source (Google Maps photo,
+    /// Instagram Reel cover). Nullable for places added manually or
+    /// before this field was introduced.
+    var imageURL: URL?
+    /// Original post URL the place was imported from — the Instagram
+    /// Reel / TikTok / Google Maps share link. Used by `PlaceCardSheet`
+    /// to make the source badge tap-through to the actual post.
+    /// Nil for manually-added places. Currently in-memory only; persists
+    /// across an import session but not across app launches until we add
+    /// a `source_url` column on the Supabase `place` table.
+    var sourceURL: URL?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -34,6 +53,7 @@ struct Place: Identifiable, Codable, Hashable {
         id: String = UUID().uuidString,
         name: String,
         category: PlaceCategory,
+        kind: PlaceKind = .venue,
         latitude: Double,
         longitude: Double,
         source: PlaceSource = .manual,
@@ -45,11 +65,14 @@ struct Place: Identifiable, Codable, Hashable {
         review: Review? = nil,
         friendRatings: [String: Double] = [:],
         createdAt: Date = .now,
-        ownerID: String = ""
+        ownerID: String = "",
+        imageURL: URL? = nil,
+        sourceURL: URL? = nil
     ) {
         self.id = id
         self.name = name
         self.category = category
+        self.kind = kind
         self.latitude = latitude
         self.longitude = longitude
         self.source = source
@@ -62,7 +85,18 @@ struct Place: Identifiable, Codable, Hashable {
         self.friendRatings = friendRatings
         self.createdAt = createdAt
         self.ownerID = ownerID
+        self.imageURL = imageURL
+        self.sourceURL = sourceURL
     }
+}
+
+/// Whether a Place is a real bookable venue or a coarse region (country,
+/// city, etc.) that the import system couldn't narrow to a single venue.
+/// Region kinds get surfaced via the "this is not a single place" tile
+/// rather than dropped as pins on the map.
+enum PlaceKind: String, Codable, Hashable {
+    case venue
+    case region
 }
 
 enum PlaceCategory: String, Codable, CaseIterable, Hashable {

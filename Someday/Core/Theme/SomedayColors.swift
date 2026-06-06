@@ -50,6 +50,19 @@ enum SomedayColors {
     static let grayMedium    = Color(red: 0.44, green: 0.44, blue: 0.50)
     static let grayLight     = Color(red: 0.96, green: 0.97, blue: 1.0)   // cool light surface
 
+    /// Poison-green / chartreuse — the app's signature accent. Used as
+    /// the dominant CTA color (Send, Preview, Add, Import, etc.) and as
+    /// the "verified / added" status indicator wherever `accentGreen` is
+    /// referenced. Pairs with charcoal text — the brightness is too high
+    /// to read white text comfortably.
+    static let lime          = Color(red: 0.83, green: 0.94, blue: 0.38)  // ≈ #D4F061
+
+    /// Alias kept for backward compatibility with call sites that
+    /// historically used `accentGreen` for status badges and check
+    /// marks. Resolves to the same poison green so the whole app stays
+    /// on one accent.
+    static let accentGreen   = lime
+
     // Friend palette — uses the warm accents for visible identity on the map
     static let friendA = amber
     static let friendB = cyan

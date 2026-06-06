@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Standard bundle keys -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>Someday</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+
+    <!-- Extension declaration: iOS share-extension hosting URL-bearing items -->
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionAttributes</key>
+        <dict>
+            <key>NSExtensionActivationRule</key>
+            <dict>
+                <!-- Accept Web URLs (Instagram, Google Maps, etc.) -->
+                <key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+                <integer>1</integer>
+                <!-- Also accept plain text containing a URL -->
+                <key>NSExtensionActivationSupportsText</key>
+                <true/>
+            </dict>
+        </dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.share-services</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+    </dict>
+</dict>
+</plist>

@@ -26,4 +26,30 @@ actor MockPlaceService: PlaceServiceProtocol {
         places[index].isSaved.toggle()
         return places[index].isSaved
     }
+
+    func importFromGoogleMaps(url: String, ownerID: String) async throws -> [Place] {
+        // Demo mode has no backend — return a couple of mock places so the
+        // UI flow can still be exercised offline. Stamp the input URL onto
+        // each so the source badge in PlaceCardSheet can tap-through back
+        // to the originating Google Maps link (matches live behaviour).
+        try await Task.sleep(for: .milliseconds(800))
+        let origin = URL(string: url)
+        return Array(SampleData.places.prefix(3)).map { place in
+            var copy = place
+            copy.source = .googleMaps
+            copy.sourceURL = origin
+            return copy
+        }
+    }
+
+    func importFromInstagram(url: String, ownerID: String) async throws -> [Place] {
+        try await Task.sleep(for: .milliseconds(800))
+        let origin = URL(string: url)
+        return Array(SampleData.places.prefix(2)).map { place in
+            var copy = place
+            copy.source = .instagram
+            copy.sourceURL = origin
+            return copy
+        }
+    }
 }

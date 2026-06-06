@@ -2,10 +2,19 @@ import SwiftUI
 
 struct ReservationView: View {
     let place: Place
+    var initialDate: Date = Date()
     let onComplete: () -> Void
 
-    @State private var selectedDate = Date()
-    @State private var selectedTime = Date()
+    @State private var selectedDate: Date
+    @State private var selectedTime: Date
+
+    init(place: Place, initialDate: Date = Date(), onComplete: @escaping () -> Void) {
+        self.place = place
+        self.initialDate = initialDate
+        self.onComplete = onComplete
+        _selectedDate = State(initialValue: initialDate)
+        _selectedTime = State(initialValue: initialDate)
+    }
     @State private var partySize = 2
     @State private var notes = ""
     @State private var showConfirmation = false
@@ -31,14 +40,14 @@ struct ReservationView: View {
                 notesSection
 
                 Button {
-                    withAnimation(.spring(response: 0.4)) { showConfirmation = true }
+                    withAnimation(SomedayAnimations.tile) { showConfirmation = true }
                 } label: {
                     Text("Confirm Reservation")
                         .font(.system(size: 17, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background(SomedayColors.primary)
-                        .foregroundColor(.white)
+                        .background(SomedayColors.lime)
+                        .foregroundColor(SomedayColors.charcoal)
                         .cornerRadius(14)
                 }
                 .padding(.top, 8)
@@ -201,8 +210,8 @@ struct ReservationView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(SomedayColors.primary)
-                    .foregroundColor(.white)
+                    .background(SomedayColors.lime)
+                    .foregroundColor(SomedayColors.charcoal)
                     .cornerRadius(14)
             }
             .padding(.horizontal, 24)

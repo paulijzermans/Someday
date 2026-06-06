@@ -46,9 +46,15 @@ extension UIColor {
 
 class PlaceAnnotation: MKPointAnnotation {
     let place: Place
+    /// Name of the custom list this place is in, when any. Drives the
+    /// pin's fill colour via `ListVisualStyle.style(for:).color` so a
+    /// pin's colour matches the list it lives in. Nil = no list →
+    /// default pin colour (turquoise / friend tint).
+    var listName: String?
 
-    init(place: Place) {
+    init(place: Place, listName: String? = nil) {
         self.place = place
+        self.listName = listName
         super.init()
         coordinate = place.coordinate
         title = place.name
@@ -59,6 +65,11 @@ struct ClusteredMapView: UIViewRepresentable {
     let places: [Place]
     @Binding var region: MKCoordinateRegion
     let onSelectPlace: (Place) -> Void
+    /// Resolver from `Place → optional list name`. When the closure
+    /// returns a non-nil name, the pin renders in that list's
+    /// deterministic colour (`ListVisualStyle.style(for:).color`).
+    /// Default no-op keeps existing call sites compiling.
+    var listNameFor: (Place) -> String? = { _ in nil }
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -96,13 +107,34 @@ struct ClusteredMapView: UIViewRepresentable {
 
     private func syncAnnotations(on mapView: MKMapView) {
         let existing = mapView.annotations.compactMap { $0 as? PlaceAnnotation }
-        let existingIDs = Set(existing.map { $0.place.id })
         let newIDs = Set(places.map(\.id))
 
-        let toRemove = existing.filter { !newIDs.contains($0.place.id) }
+        // Two-purpose pass:
+        //   • Drop annotations whose place is gone from `places`.
+        //   • Drop + re-add annotations whose list membership changed
+        //     since last render (no other way to force prepareForDisplay
+        //     to re-fire and regenerate the pin image with a new colour).
+        var toRemove: [PlaceAnnotation] = []
+        var kept: Set<String> = []
+        for ann in existing {
+            if !newIDs.contains(ann.place.id) {
+                toRemove.append(ann)
+                continue
+            }
+            if ann.listName != listNameFor(ann.place) {
+                toRemove.append(ann)
+            } else {
+                kept.insert(ann.place.id)
+            }
+        }
         if !toRemove.isEmpty { mapView.removeAnnotations(toRemove) }
 
-        let toAdd = places.filter { !existingIDs.contains($0.id) }.map { PlaceAnnotation(place: $0) }
+        // Anything not in `kept` is either brand-new or was just re-added
+        // due to a list-colour change — both paths construct a fresh
+        // annotation with the up-to-date `listName`.
+        let toAdd = places
+            .filter { !kept.contains($0.id) }
+            .map { PlaceAnnotation(place: $0, listName: listNameFor($0)) }
         if !toAdd.isEmpty { mapView.addAnnotations(toAdd) }
     }
 
@@ -156,15 +188,35 @@ struct ClusteredMapView: UIViewRepresentable {
                 parent.onSelectPlace(pa.place)
             } else if let cluster = annotation as? MKClusterAnnotation {
                 isProgrammatic = true
-                let zoomed = MKCoordinateRegion(
-                    center: cluster.coordinate,
-                    span: MKCoordinateSpan(
-                        latitudeDelta: mapView.region.span.latitudeDelta * 0.4,
-                        longitudeDelta: mapView.region.span.longitudeDelta * 0.4
-                    )
-                )
-                mapView.setRegion(zoomed, animated: true)
+                mapView.setRegion(zoomedRegion(for: cluster, in: mapView), animated: true)
             }
+        }
+
+        /// Tight bounding-box region around the cluster's member annotations,
+        /// padded so the pins have breathing room and clamped to a minimum
+        /// span so a stack of pins at one coordinate doesn't zoom to the moon.
+        private func zoomedRegion(for cluster: MKClusterAnnotation,
+                                  in mapView: MKMapView) -> MKCoordinateRegion {
+            let coords = cluster.memberAnnotations.map(\.coordinate)
+            guard !coords.isEmpty else { return mapView.region }
+
+            let lats = coords.map(\.latitude)
+            let lons = coords.map(\.longitude)
+            let minLat = lats.min()!, maxLat = lats.max()!
+            let minLon = lons.min()!, maxLon = lons.max()!
+
+            let centerLat = (minLat + maxLat) / 2
+            let centerLon = (minLon + maxLon) / 2
+
+            // 1.6× the bounding extent so pins aren't pressed against the edges.
+            // Minimum span keeps single-coordinate clusters from over-zooming.
+            let spanLat = max((maxLat - minLat) * 1.6, 0.004)
+            let spanLon = max((maxLon - minLon) * 1.6, 0.004)
+
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
+                span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+            )
         }
     }
 }
@@ -186,7 +238,9 @@ class PlacePinAnnotationView: MKAnnotationView {
         guard let pa = annotation as? PlaceAnnotation else { return }
 
         let place = pa.place
-        let (img, offset) = Self.renderPin(place: place)
+        // Pass listName through so the renderer can swap in the list's
+        // colour. Nil = use the default `pinColor(for:)` heuristic.
+        let (img, offset) = Self.renderPin(place: place, listName: pa.listName)
         image = img
         centerOffset = offset
 
@@ -200,17 +254,28 @@ class PlacePinAnnotationView: MKAnnotationView {
     /// - White edge on every pin.
     /// - Visited (rated) pins use a darker fill and show the rating pill bottom-right.
     /// - Unvisited pins use the normal fill and show a source logo bottom-right (Instagram, Facebook, etc).
-    private static func renderPin(place: Place) -> (UIImage, CGPoint) {
+    private static func renderPin(place: Place, listName: String? = nil) -> (UIImage, CGPoint) {
         let borderWidth: CGFloat = 1.5
         let bulbRadius: CGFloat = 7        // radius of the round head
         let tipDrop: CGFloat = 11          // how far the point extends below the head center
 
-        let baseColor = Self.pinColor(for: place)
+        // List-colour override wins over the default heuristic so a pin's
+        // colour matches the list it lives in (rose / blue / amber / …).
+        let baseColor: UIColor
+        if let listName, !listName.isEmpty {
+            baseColor = UIColor(ListVisualStyle.style(for: listName).color)
+        } else {
+            baseColor = Self.pinColor(for: place)
+        }
         let isVisited = place.displayedRating?.value != nil
         let fillColor = isVisited ? baseColor.darkened(by: 0.35) : baseColor
 
-        // Small source logo on the head for unvisited, non-manual saves.
-        let showSourceBadge = !isVisited && place.source != .manual
+        // Source-logo badge was previously rendered on the head for
+        // unvisited, non-manual saves (Instagram pink, TikTok teal etc.)
+        // — disabled because the third-party brand marks at this size
+        // read as visual noise. The PlaceCardSheet's hero image still
+        // shows the source badge for provenance.
+        let showSourceBadge = false
         let badgeSize: CGFloat = 9
 
         // Pin region (head + point), before any badge extension.
@@ -342,7 +407,30 @@ class ClusterPinAnnotationView: MKAnnotationView {
 
         let count = cluster.memberAnnotations.count
         let size: CGFloat = 40
-        let color = UIColor(SomedayColors.primary)
+
+        // List affinity: if every clustered place belongs to the SAME
+        // custom list, tint the cluster in that list's deterministic
+        // colour so the cluster visually reads as "this is part of <list>".
+        // Mixed-list clusters (or any pin not in a list) fall back to
+        // brand primary — the existing default.
+        //
+        // `syncAnnotations` in the SwiftUI wrapper drops + re-adds any
+        // annotation whose listName changed, so prepareForDisplay fires
+        // again and the cluster recolours automatically when the user
+        // moves a pin between lists.
+        let members = cluster.memberAnnotations.compactMap { $0 as? PlaceAnnotation }
+        let allMembersArePlace = members.count == count
+        let listNames = Set(members.compactMap(\.listName))
+        let allMembersListed = members.allSatisfy { $0.listName != nil }
+        let color: UIColor
+        if allMembersArePlace,
+           allMembersListed,
+           listNames.count == 1,
+           let unifiedName = listNames.first {
+            color = UIColor(ListVisualStyle.style(for: unifiedName).color)
+        } else {
+            color = UIColor(SomedayColors.primary)
+        }
 
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         image = renderer.image { _ in

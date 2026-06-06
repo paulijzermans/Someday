@@ -86,6 +86,11 @@ struct PlaceRow: Codable {
     var visited_by_ids: [String]
     var tags: [String]
     var is_saved: Bool
+    var image_url: String?
+    /// Original Reel / TikTok / Maps URL the place was imported from.
+    /// Round-tripped via the `place.source_url` column (migration
+    /// `20260605161830_add_place_source_url.sql`).
+    var source_url: String?
     var created_at: String?
 
     /// Reviews/friendRatings are assembled from the `reviews` table and injected.
@@ -105,7 +110,9 @@ struct PlaceRow: Codable {
             review: review,
             friendRatings: friendRatings,
             createdAt: SupabaseDate.parse(created_at),
-            ownerID: owner_id
+            ownerID: owner_id,
+            imageURL: image_url.flatMap(URL.init(string:)),
+            sourceURL: source_url.flatMap(URL.init(string:))
         )
     }
 
@@ -123,9 +130,35 @@ struct PlaceRow: Codable {
             visited_by_ids: place.visitedByIDs,
             tags: place.tags,
             is_saved: place.isSaved,
+            image_url: place.imageURL?.absoluteString,
+            source_url: place.sourceURL?.absoluteString,
             created_at: nil
         )
     }
+}
+
+// MARK: - lists + list_places
+
+struct ListRow: Codable {
+    let id: String
+    var owner_id: String
+    var name: String
+    var created_at: String?
+
+    static func payload(from list: CustomList, ownerID: String) -> ListRow {
+        ListRow(
+            id: list.id.uuidString,
+            owner_id: ownerID,
+            name: list.name,
+            created_at: nil
+        )
+    }
+}
+
+struct ListPlaceRow: Codable {
+    var list_id: String
+    var place_id: String
+    var position: Int
 }
 
 // MARK: - reviews
@@ -166,17 +199,4 @@ struct FriendshipRow: Codable {
     var created_at: String?
 }
 
-// MARK: - lists
-
-struct ListRow: Codable {
-    let id: String
-    var owner_id: String
-    var name: String
-    var created_at: String?
-}
-
-struct ListPlaceRow: Codable {
-    var list_id: String
-    var place_id: String
-    var position: Int
-}
+// (ListRow + ListPlaceRow live above next to PlaceRow.)
