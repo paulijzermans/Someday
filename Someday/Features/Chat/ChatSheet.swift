@@ -20,6 +20,11 @@ import SwiftUI
 struct ChatSheet: View {
     @State var viewModel: ChatViewModel
     let onDismiss: () -> Void
+    /// Optional message to auto-send when the sheet first appears.
+    /// Used when the user types a question into the top-right AI search
+    /// bar and hits Return — the sheet opens and immediately starts
+    /// answering, instead of dropping them on an empty input.
+    var initialPrompt: String? = nil
 
     @FocusState private var inputFocused: Bool
 
@@ -49,7 +54,19 @@ struct ChatSheet: View {
                 }
             }
         }
-        .onAppear { inputFocused = true }
+        .onAppear {
+            // Auto-send a prompt passed in from the launcher (e.g. the
+            // top-right AI search bar). Done before focusing the input
+            // so the keyboard doesn't pop up during the AI's reply.
+            if let prompt = initialPrompt,
+               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               viewModel.messages.isEmpty {
+                viewModel.inputText = prompt
+                Task { await viewModel.send() }
+            } else {
+                inputFocused = true
+            }
+        }
     }
 
     // MARK: - Empty state
@@ -269,10 +286,21 @@ final class ChatViewModel {
     /// Rebuilt on every send so the assistant always sees the user's
     /// current places / lists / friends — no stale snapshots.
     private let contextProvider: () -> ChatContext
+    /// Applies a chat-driven mutation (create_list, delete_place, …) by
+    /// routing it through `MapViewModel` for the optimistic local
+    /// update + Supabase write. Optional — non-mutating chat surfaces
+    /// (the demo build / unit tests) can leave this nil and the
+    /// `.mutation` events become silent no-ops.
+    private let mutationApplier: ((ChatMutation) -> Void)?
 
-    init(chatService: ChatService, contextProvider: @escaping () -> ChatContext) {
+    init(
+        chatService: ChatService,
+        contextProvider: @escaping () -> ChatContext,
+        mutationApplier: ((ChatMutation) -> Void)? = nil
+    ) {
         self.chatService = chatService
         self.contextProvider = contextProvider
+        self.mutationApplier = mutationApplier
     }
 
     @MainActor
@@ -280,26 +308,76 @@ final class ChatViewModel {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isThinking else { return }
 
+        // 1. Append the user message, then pre-allocate an empty
+        //    assistant message we mutate in place as events arrive.
+        //    This is what makes the UI feel live: text appears one
+        //    delta at a time, step rows pop in above as they happen.
         messages.append(ChatMessage(role: .user, content: text))
         inputText = ""
         errorMessage = nil
         isThinking = true
         Haptics.tap()
-        defer { isThinking = false }
+
+        // History sent to the server: everything BEFORE the assistant
+        // placeholder we're about to append (i.e. ends on the user's
+        // turn). Important — sending the empty placeholder would break
+        // Anthropic's user/assistant alternation requirement.
+        let history = messages
+        let assistantIndex = messages.endIndex
+        messages.append(ChatMessage(role: .assistant, content: ""))
 
         do {
             let context = contextProvider()
-            let reply = try await chatService.send(history: messages, context: context)
-            messages.append(ChatMessage(role: .assistant, content: reply))
+            for try await event in chatService.stream(history: history, context: context) {
+                // The placeholder may have been removed by a `clear`
+                // mid-stream (rare); bail out safely if so.
+                guard assistantIndex < messages.count,
+                      messages[assistantIndex].role == .assistant else { break }
+                switch event {
+                case .step(let id, let icon, let label, let chips):
+                    messages[assistantIndex].steps.append(
+                        ChatStep(id: id, icon: icon, label: label, chips: chips)
+                    )
+                case .stepDone(let id):
+                    if let idx = messages[assistantIndex].steps.firstIndex(where: { $0.id == id }) {
+                        messages[assistantIndex].steps[idx].done = true
+                    }
+                case .textDelta(let delta):
+                    messages[assistantIndex].content += delta
+                case .mutation(let m):
+                    // Side-effecting change the server's agent decided to
+                    // make. Apply locally + persist via the closure the
+                    // host screen wired up (typically MapHomeView →
+                    // MapViewModel). Fire-and-forget — we don't wait for
+                    // the persist before continuing to stream the reply.
+                    mutationApplier?(m)
+                case .done:
+                    break
+                }
+            }
             Haptics.success()
         } catch {
             errorMessage = error.localizedDescription
-            messages.append(ChatMessage(
-                role: .assistant,
-                content: "Sorry — I couldn't think that through. (\(error.localizedDescription))"
-            ))
+            // Server-unreachable gets its own clean message; anything
+            // else falls back to the generic "couldn't think that
+            // through" wrapper so the user still sees what went wrong.
+            let bubble: String
+            if let chatErr = error as? ChatServiceError {
+                bubble = chatErr.localizedDescription
+            } else {
+                bubble = "Sorry — I couldn't think that through. (\(error.localizedDescription))"
+            }
+            if assistantIndex < messages.count,
+               messages[assistantIndex].role == .assistant {
+                // Replace the (possibly empty) placeholder with the
+                // error so we don't leave a blank bubble behind.
+                messages[assistantIndex] = ChatMessage(role: .assistant, content: bubble)
+            } else {
+                messages.append(ChatMessage(role: .assistant, content: bubble))
+            }
             Haptics.error()
         }
+        isThinking = false
     }
 }
 
