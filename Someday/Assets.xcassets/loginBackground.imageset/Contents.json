@@ -2,7 +2,7 @@
   "images" : [
     {
       "idiom" : "universal",
-      "filename" : "balloon.png",
+      "filename" : "loginBackground.png",
       "scale" : "3x"
     }
   ],
@@ -11,7 +11,7 @@
     "version" : 1
   },
   "properties" : {
-    "preserves-vector-representation" : true,
-    "template-rendering-intent" : "template"
+    "preserves-vector-representation" : false,
+    "template-rendering-intent" : "original"
   }
 }

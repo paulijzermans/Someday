@@ -27,13 +27,51 @@ final class AppState {
         case googleMaps(URL)
     }
 
-    /// Parses `someday://import?url=…` and stashes the result for the
-    /// map to pick up. Returns true if the URL was recognized.
+    /// Parses any `someday://…` deep link and routes it to the right
+    /// handler. Returns true if the URL was recognised.
+    ///
+    /// Recognised hosts:
+    ///   • `someday://import?url=…` — Share Extension / external import
+    ///     hand-off; stashes a `PendingImport` for the map to pick up.
+    ///   • `someday://auth-callback…` — Supabase email-confirmation
+    ///     redirect. The fragment carries the access/refresh tokens,
+    ///     which we feed to the SDK so the user lands signed in.
     @discardableResult
     func handle(externalURL: URL) -> Bool {
         guard externalURL.scheme == "someday" else { return false }
-        guard externalURL.host == "import" else { return false }
 
+        switch externalURL.host {
+        case "import":
+            return handleImportURL(externalURL)
+        case "auth-callback":
+            handleAuthCallback(externalURL)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Hand off a `someday://auth-callback#access_token=…` payload to
+    /// the auth service. Fires off the consume + state-update on a Task
+    /// so the deep-link handler can return immediately.
+    private func handleAuthCallback(_ url: URL) {
+        Task { @MainActor in
+            do {
+                let user = try await services.auth.consumeAuthCallback(url: url)
+                handleAuthSuccess(user: user)
+            } catch {
+                #if DEBUG
+                print("[AppState] consumeAuthCallback failed: \(error)")
+                #endif
+                // Stay on the auth screen — the user can hit
+                // "I've confirmed" or try again. We don't surface this
+                // error in the UI because the user already saw it via
+                // the confirmation panel.
+            }
+        }
+    }
+
+    private func handleImportURL(_ externalURL: URL) -> Bool {
         let comps = URLComponents(url: externalURL, resolvingAgainstBaseURL: false)
         guard let raw = comps?.queryItems?.first(where: { $0.name == "url" })?.value,
               let target = URL(string: raw) else {

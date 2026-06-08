@@ -35,16 +35,39 @@ final class SupabaseAuthService: AuthServiceProtocol, @unchecked Sendable {
         }
     }
 
-    func signUpWithEmail(email: String, password: String, name: String) async throws -> UserProfile {
+    func signUpWithEmail(email: String, password: String, name: String) async throws -> SignUpResult {
         do {
             let response = try await client.auth.signUp(
                 email: email,
                 password: password,
-                data: ["name": .string(name)]
+                data: ["name": .string(name)],
+                redirectTo: SupabaseClientProvider.redirectURL
             )
-            // When email confirmation is off, `session` is present; otherwise we
-            // still have the created user to surface in the UI.
-            return Self.profile(from: response.user)
+            // Email confirmation is configured on the Supabase project.
+            // When it's enabled, `session` comes back nil — the user has
+            // been created in `auth.users` but they can't act until they
+            // click the link. We surface that state to the UI explicitly
+            // so we never try to call protected endpoints (like
+            // `find-friends-on-someday`) without a JWT.
+            if response.session == nil {
+                return .confirmationRequired(email: email)
+            }
+            return .signedIn(Self.profile(from: response.user))
+        } catch {
+            throw Self.mapError(error)
+        }
+    }
+
+    func consumeAuthCallback(url: URL) async throws -> UserProfile {
+        do {
+            // The supabase-swift SDK reads the access/refresh-token fragment
+            // off the URL and stores the session. After this the SDK's
+            // `currentUser` is populated and protected calls succeed.
+            try await client.auth.session(from: url)
+            guard let user = client.auth.currentUser else {
+                throw AuthError.unknown("Confirmation link didn't carry a session.")
+            }
+            return Self.profile(from: user)
         } catch {
             throw Self.mapError(error)
         }

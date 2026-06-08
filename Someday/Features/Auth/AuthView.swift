@@ -18,12 +18,28 @@ struct AuthView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [SomedayColors.green, SomedayColors.greenDark],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Brand background — the blue gradient image lives in
+            // Assets.xcassets/loginBackground.imageset. Stretches to
+            // the safe area edges so the hue carries the whole
+            // screen. Used by both login and onboarding so the two
+            // visually feel like one continuous moment.
+            Image("loginBackground")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
+
+            // Centered hot-air-balloon silhouette — the same asset
+            // used elsewhere in the app, so the brand mark lands on
+            // the auth screen too. Mild bottom offset so it sits
+            // above the hero / form rather than dead-centre behind
+            // the title.
+            Image("balloon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 220)
+                .foregroundStyle(.white.opacity(0.92))
+                .offset(y: -120)
+                .allowsHitTesting(false)
 
             // Tap outside the form to dismiss the keyboard. Without this
             // the keyboard sticks around after the user finishes typing
@@ -32,8 +48,17 @@ struct AuthView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { focusedField = nil }
 
-            ScrollView {
-                VStack(spacing: 28) {
+            // Single non-scrolling column. We rely on `ignoresSafeArea`
+            // for the gradient + a fixed-height VStack so the screen
+            // doesn't bounce when the keyboard comes up. The TextFields
+            // still get pushed up by the system keyboard automatically.
+            if let pending = vm.pendingConfirmationEmail {
+                confirmationPanel(email: pending)
+                    .padding(.horizontal, 28)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else {
+                VStack(spacing: 22) {
+                    Spacer(minLength: 0)
                     hero
                     socialButtons
                     divider
@@ -42,6 +67,7 @@ struct AuthView: View {
                     if let error = vm.error {
                         errorBanner(error)
                     }
+                    Spacer(minLength: 0)
                     Text("By continuing, you agree to our\nTerms of Service & Privacy Policy")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.5))
@@ -49,36 +75,40 @@ struct AuthView: View {
                         .padding(.top, 4)
                 }
                 .padding(.horizontal, 28)
-                .padding(.vertical, 60)
+                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
             }
-            .scrollDismissesKeyboard(.interactively)
 
             if vm.isLoading {
                 Color.black.opacity(0.2).ignoresSafeArea()
                 ProgressView().tint(.white).scaleEffect(1.2)
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: vm.pendingConfirmationEmail)
+        // The host app forwards the `someday://auth-callback#…` link the
+        // user clicked in the confirmation email to AppState; that calls
+        // `handleAuthCallback` which lands here through this binding so
+        // we can flip out of the pending panel into the signed-in app.
     }
 
     // MARK: - Sections
 
     private var hero: some View {
-        VStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 24)
-                .fill(SomedayColors.butter.opacity(0.18))
-                .frame(width: 76, height: 76)
-                .overlay(
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.system(size: 38))
-                        .foregroundColor(SomedayColors.butter)
-                )
+        VStack(spacing: 12) {
+            // Old mappin badge dropped — the centred balloon image
+            // behind this stack is the brand mark now, and a second
+            // square pin under "Someday" was visual noise.
             Text("Someday")
-                .font(SomedayFonts.brand(size: 56))
+                .font(SomedayFonts.brand(size: 52))
                 .foregroundColor(SomedayColors.butter)
                 .tracking(1)
-            Text("Discover amazing places.\nSave them for someday.")
-                .font(.system(size: 15))
-                .foregroundColor(SomedayColors.butter.opacity(0.75))
+            // Slogan — used here, on the splash, on the Profile footer.
+            // Short, definitional, and the line we want users to hear in
+            // their head when they think about the product.
+            Text("Save for Someday")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(SomedayColors.butter.opacity(0.85))
                 .multilineTextAlignment(.center)
         }
     }
@@ -254,6 +284,80 @@ struct AuthView: View {
             .padding(.vertical, 10)
             .background(.red.opacity(0.6))
             .cornerRadius(10)
+    }
+
+    // MARK: - Email confirmation panel
+    //
+    // Shown after sign-up when Supabase is configured to require email
+    // confirmation. The body is the only thing on screen — no form, no
+    // social buttons — so the user understands their next action lives
+    // in their mailbox, not here.
+
+    @ViewBuilder
+    private func confirmationPanel(email: String) -> some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 0)
+
+            ZStack {
+                Circle()
+                    .fill(SomedayColors.butter.opacity(0.18))
+                    .frame(width: 100, height: 100)
+                Image(systemName: "envelope.badge.fill")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundColor(SomedayColors.butter)
+            }
+
+            VStack(spacing: 10) {
+                Text("Check your email")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(SomedayColors.butter)
+                Text("We sent a confirmation link to")
+                    .font(.system(size: 15))
+                    .foregroundColor(SomedayColors.butter.opacity(0.85))
+                Text(email)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("Tap the link to land back here, signed in and ready to save your first place.")
+                    .font(.system(size: 14))
+                    .foregroundColor(SomedayColors.butter.opacity(0.75))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .padding(.top, 8)
+                    .padding(.horizontal, 6)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                Task {
+                    // Best-effort: try a sign-in with the same credentials
+                    // they just used. If Supabase says "email not
+                    // confirmed", we keep them on this panel.
+                    if let user = await vm.signInWithEmail() {
+                        appState.handleAuthSuccess(user: user)
+                    }
+                }
+            } label: {
+                Text("I've confirmed — sign in")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(SomedayColors.butter)
+                    .foregroundColor(SomedayColors.greenDark)
+                    .cornerRadius(12)
+            }
+            .disabled(vm.isLoading)
+
+            Button {
+                vm.cancelPendingConfirmation()
+            } label: {
+                Text("Use a different email")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(SomedayColors.butter.opacity(0.8))
+            }
+            .padding(.bottom, 6)
+        }
+        .padding(.vertical, 40)
     }
 
     // MARK: - Submit

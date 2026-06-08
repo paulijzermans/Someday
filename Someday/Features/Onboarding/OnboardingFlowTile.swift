@@ -32,6 +32,12 @@ struct OnboardingFlowTile: View {
     /// Used to detect "a sheet-based import landed during this step"
     /// without callbacks from the import flows.
     @State private var placesAtStepStart: Int = 0
+    /// True after the user explicitly opens an import sheet on the
+    /// current step. The `.onChange(of: vm.places.count)` handler only
+    /// fires the celebrate path while this is true, so async place loads
+    /// happening on first launch — which would otherwise look like an
+    /// import landed — can't auto-advance past step 0.
+    @State private var awaitingImport: Bool = false
 
     // --- Inline list step (#2) state ---
 
@@ -91,9 +97,24 @@ struct OnboardingFlowTile: View {
             // Sheet-based steps (Maps / Socials) — when the import
             // sheet completes, `vm.places` grows. We pick that up
             // here, bucket the new pins into the "My first places"
-            // list, and celebrate + advance. Inline list step
-            // (#2) buckets directly from its own extraction Task.
+            // list, and celebrate + advance.
+            //
+            // The `awaitingImport` guard is critical: without it, the
+            // very first `vm.loadData()` async result (which fills
+            // `places` from 0 to N on cold launch) would look like a
+            // freshly-completed import and auto-advance the user past
+            // step 0 before they ever see it.
+            //
+            // Inline list step (#2) buckets directly from its own
+            // extraction Task and never sets `awaitingImport`.
             .onChange(of: vm.places.count) { oldCount, newCount in
+                guard awaitingImport else {
+                    // Loose tracking: keep the baseline in lockstep with
+                    // any non-import place growth so a later import
+                    // measures from the right point.
+                    placesAtStepStart = newCount
+                    return
+                }
                 guard step == 0 || step == 1 else { return }
                 guard newCount > placesAtStepStart, !celebrating else { return }
                 // Take the newest pins (everything added since the step
@@ -102,6 +123,7 @@ struct OnboardingFlowTile: View {
                 // slice is what just arrived.
                 let added = Array(vm.places.suffix(newCount - placesAtStepStart))
                 vm.addToOnboardingFirstList(added)
+                awaitingImport = false
                 celebrate()
             }
     }
@@ -194,7 +216,15 @@ struct OnboardingFlowTile: View {
             title: OnboardingStep.all[0].title,
             body: OnboardingStep.all[0].body,
             primaryCTA: OnboardingStep.all[0].primaryCTA
-        ) { vm.showMapsImport = true }
+        ) {
+            // Snapshot the current count + arm the import-detection
+            // watcher right before we open the sheet — that way the
+            // celebrate path knows the next place-count growth is
+            // attributable to this import, not background loading.
+            placesAtStepStart = vm.places.count
+            awaitingImport = true
+            vm.showMapsImport = true
+        }
     }
 
     private var socialsStep: some View {
@@ -202,7 +232,11 @@ struct OnboardingFlowTile: View {
             title: OnboardingStep.all[1].title,
             body: OnboardingStep.all[1].body,
             primaryCTA: OnboardingStep.all[1].primaryCTA
-        ) { vm.showSocialsImport = true }
+        ) {
+            placesAtStepStart = vm.places.count
+            awaitingImport = true
+            vm.showSocialsImport = true
+        }
     }
 
     /// Shared layout for the two sheet-based steps. The CTA opens the
@@ -273,6 +307,15 @@ struct OnboardingFlowTile: View {
             aiBorderedEditor
 
             findPlacesButton
+
+            // Skip out of this step without pasting anything. Mirrors
+            // the "Later" affordance on the Maps / Socials steps —
+            // some users genuinely don't have a list to drop and were
+            // getting stuck on a screen they couldn't dismiss.
+            Button("Later", action: advance)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(SomedayColors.grayMedium)
+                .padding(.vertical, 6)
 
             // Results pop in one by one as the geocoder lands them.
             // Each row uses an asymmetric move+fade so the visual
@@ -638,6 +681,10 @@ struct OnboardingFlowTile: View {
         friendsState = .scanning
         do {
             let hashes = try await svc.collectContactHashes()
+            if hashes.isEmpty {
+                friendsState = .noMatches
+                return
+            }
             let found = try await svc.findMatches(hashes)
             if found.isEmpty {
                 friendsState = .noMatches
@@ -647,8 +694,27 @@ struct OnboardingFlowTile: View {
                 Haptics.success()
             }
         } catch {
-            friendsState = .errored(error.localizedDescription)
+            #if DEBUG
+            print("[OnboardingFlowTile] runDiscovery failed: \(error)")
+            #endif
+            friendsState = .errored(friendlyMessage(for: error))
         }
+    }
+
+    /// Best-effort translation of the various low-level errors the
+    /// discovery pipeline can throw into something a user can act on.
+    private func friendlyMessage(for error: Error) -> String {
+        let raw = error.localizedDescription.lowercased()
+        // The Supabase functions client throws this when the user isn't
+        // signed in (no JWT) or the function returns 4xx. Worth calling
+        // out separately because the cause-and-fix differ.
+        if raw.contains("non-2xx") || raw.contains("functionshttp") || raw.contains("invalid jwt") {
+            return "We couldn't reach the matching service. Confirm your email first, then try again."
+        }
+        if raw.contains("not authorized") || raw.contains("not authenticated") {
+            return "Please sign in again to find friends."
+        }
+        return error.localizedDescription
     }
 
     @MainActor
@@ -704,6 +770,7 @@ struct OnboardingFlowTile: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
             step += 1
             placesAtStepStart = vm.places.count
+            awaitingImport = false
             // Reset list step state when leaving it so re-entering
             // (unlikely but possible) starts clean.
             listText = ""
