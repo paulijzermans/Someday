@@ -67,6 +67,40 @@ final class SupabaseUserService: UserServiceProtocol, @unchecked Sendable {
             .execute()
     }
 
+    func updateProfile(
+        userID: String,
+        name: String?,
+        phone: String?
+    ) async throws -> UserProfile {
+        // Build a sparse payload — PostgREST only updates the keys present
+        // in the body, so we can leave untouched fields alone. The Postgres
+        // trigger `compute_profile_contact_hashes()` re-hashes phone/email
+        // automatically when those columns are part of the update.
+        struct Patch: Encodable {
+            let name: String?
+            let phone: String?
+        }
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let patch = Patch(
+            // Empty name would blank out the profile — drop it entirely.
+            name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
+            // Empty phone IS meaningful — the user can clear their number.
+            // The trigger nulls the hash when the source is empty, so we
+            // pass the empty string through.
+            phone: phone?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        // Don't ship an empty patch — saves a no-op round trip.
+        if patch.name == nil && patch.phone == nil {
+            return try await fetchUser(id: userID)
+        }
+        try await client
+            .from("profiles")
+            .update(patch)
+            .eq("id", value: userID)
+            .execute()
+        return try await fetchUser(id: userID)
+    }
+
     func searchUsers(query: String) async throws -> [UserProfile] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }

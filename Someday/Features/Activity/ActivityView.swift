@@ -76,6 +76,15 @@ struct ActivityView: View {
     let places: [Place]
     let friends: [UserProfile]
     let followingIDs: Set<String>
+    /// Pending friend requests addressed to the current user. Rendered
+    /// as a real inbox at the top of the events page — distinct from the
+    /// mock `.startedFollowing` events that also live in `events`.
+    var incomingFriendRequests: [IncomingFriendRequest] = []
+    /// Called with the request the user accepted. Parent runs the RPC
+    /// + refreshes the friends list.
+    var onAcceptFriendRequest: (IncomingFriendRequest) -> Void = { _ in }
+    /// Called with the request the user rejected. Parent deletes the row.
+    var onRejectFriendRequest: (IncomingFriendRequest) -> Void = { _ in }
     var onSelectPlace: (Place) -> Void
     /// Tapping a list tile inside an expanded person row routes here.
     /// The parent handles previewing the list on the map.
@@ -167,6 +176,12 @@ struct ActivityView: View {
     private var eventsPage: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                // Real friend-request inbox at the very top of the feed.
+                // Suppressed when empty so the events feed has the entire
+                // page when nothing's pending.
+                if !incomingFriendRequests.isEmpty {
+                    friendRequestInbox
+                }
                 ForEach(events) { event in
                     EventTile(
                         event: event,
@@ -185,6 +200,42 @@ struct ActivityView: View {
         }
         .scrollContentBackground(.hidden)
         .background(Color.clear)
+    }
+
+    /// The inbox section. Header + one `FriendRequestTile` per row, with
+    /// a fade-out animation when a row is accepted/rejected so the user
+    /// sees a clean transition before the parent refreshes.
+    private var friendRequestInbox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.primary)
+                Text("Friend requests")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.grayMedium)
+                Spacer()
+                Text("\(incomingFriendRequests.count)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(SomedayColors.grayLight)
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 4)
+
+            ForEach(incomingFriendRequests) { request in
+                FriendRequestTile(
+                    request: request,
+                    onAccept: { onAcceptFriendRequest(request) },
+                    onReject: { onRejectFriendRequest(request) }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .padding(.top, 4)
+        .animation(SomedayAnimations.followCTA, value: incomingFriendRequests)
     }
 
     private func personPage(_ person: UserProfile) -> some View {
@@ -785,5 +836,93 @@ enum ActivityTime {
         if hours < 24 { return "\(hours)h ago" }
         if days == 1 { return "Yesterday" }
         return "\(days)d ago"
+    }
+}
+
+// MARK: - Friend request tile
+//
+// Distinct from `FollowTile` (which is for the mock `.startedFollowing`
+// events). This one is wired to the real `friend_requests` table:
+// Accept calls `accept_friend_request` RPC; Reject just deletes the row.
+
+private struct FriendRequestTile: View {
+    let request: IncomingFriendRequest
+    let onAccept: () -> Void
+    let onReject: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            requestAvatar
+            VStack(alignment: .leading, spacing: 2) {
+                (Text(request.name).fontWeight(.semibold) + Text(" wants to be friends"))
+                    .font(.system(size: 14))
+                    .foregroundColor(SomedayColors.charcoal)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(ActivityTime.string(for: request.createdAt))
+                    .font(.system(size: 12))
+                    .foregroundColor(SomedayColors.grayMedium)
+            }
+
+            Spacer(minLength: 8)
+
+            // Reject — secondary, neutral chip.
+            Button {
+                Haptics.soft()
+                onReject()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .frame(width: 32, height: 32)
+                    .background(SomedayColors.grayLight)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            // Accept — primary, brand green.
+            Button {
+                Haptics.medium()
+                onAccept()
+            } label: {
+                Text("Accept")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.butter)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(SomedayColors.green)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+
+    /// Avatar tile — reuses the same async-image + initials fallback the
+    /// rest of Activity uses, so the visual reads consistently. Inlined
+    /// (rather than reusing `ActivityAvatar`) because that view depends
+    /// on `UserProfile`, which we don't have for a bare request — we
+    /// only get id/name/avatarURL from the join.
+    private var requestAvatar: some View {
+        let size: CGFloat = 40
+        let initial = request.name.first.map(String.init)?.uppercased() ?? "?"
+        return AsyncImage(url: request.avatarURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            default:
+                Circle()
+                    .fill(SomedayColors.friendColor(for: abs(request.id.hashValue)).opacity(0.3))
+                    .overlay(
+                        Text(initial)
+                            .font(.system(size: size * 0.42, weight: .bold))
+                            .foregroundColor(.white)
+                    )
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(.white, lineWidth: 1.5))
     }
 }

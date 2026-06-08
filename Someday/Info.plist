@@ -33,6 +33,27 @@
     <key>NSContactsUsageDescription</key>
     <string>Someday checks your contacts to find which of your loved ones already have the app. We hash phone numbers and emails on your device — your contacts never leave your phone in raw form.</string>
 
+    <!-- Location permission — used by the "locate me" button under the
+         profile avatar to recenter the map on the user's current spot.
+         Only requested when the user taps the button; never collected
+         in the background. Apple reviews this string verbatim, so it
+         must describe the user-visible action, not a vague benefit. -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Someday uses your location only when you tap the "Locate me" button to recenter the map on where you are. Your location is never tracked or stored.</string>
+
+    <!-- Microphone permission — used by the mic button in the AI chat
+         bar to dictate questions instead of typing. The mic only
+         activates when the user taps the button; audio isn't recorded
+         in the background or saved anywhere. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Someday uses the microphone only when you tap the mic button to dictate a question to the AI assistant. Audio is processed on-device by Apple's speech recognition and never stored.</string>
+
+    <!-- Speech recognition permission — paired with the microphone
+         permission above for on-device transcription of the user's
+         dictated question into the AI chat input. -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Someday transcribes what you say to the AI assistant so you can ask questions hands-free. Recognition runs on-device via Apple's speech framework and the transcript is only used to fill the chat input.</string>
+
     <!-- Custom font registration -->
     <key>UIAppFonts</key>
     <array>

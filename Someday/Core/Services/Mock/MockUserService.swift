@@ -28,4 +28,23 @@ final class MockUserService: UserServiceProtocol, @unchecked Sendable {
         let lowered = query.lowercased()
         return allUsers.filter { $0.name.lowercased().contains(lowered) }
     }
+
+    func updateProfile(
+        userID: String,
+        name: String?,
+        phone: String?
+    ) async throws -> UserProfile {
+        try await Task.sleep(for: .milliseconds(300))
+        // Mock doesn't persist — just echo a synthetic updated profile so
+        // the UI optimistic-update path looks alive in previews.
+        var updated = try await fetchUser(id: userID)
+        if let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmed.isEmpty {
+            updated.name = trimmed
+        }
+        // Phone isn't on UserProfile (it's a profiles-table-only field used
+        // for contact matching); the mock just ack-and-forgets it.
+        _ = phone
+        return updated
+    }
 }

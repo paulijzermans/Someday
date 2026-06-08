@@ -42,6 +42,21 @@ protocol ContactsServiceProtocol: Sendable {
 
     /// Send a friend request from the current user to the given user.
     func sendFriendRequest(toUserID: String) async throws
+
+    /// Fetch the list of pending friend requests addressed to the current
+    /// user. The Activity tab inbox renders one row per result with
+    /// Accept / Reject affordances.
+    func fetchIncomingRequests() async throws -> [IncomingFriendRequest]
+
+    /// Accept a pending request. Backed by the `accept_friend_request`
+    /// SECURITY DEFINER RPC, which atomically inserts the bidirectional
+    /// `friendships` rows and deletes the request.
+    func acceptFriendRequest(fromUserID: String) async throws
+
+    /// Reject (decline) a pending request. Just deletes the row — RLS
+    /// allows either party to delete, so the receiver dropping it is
+    /// sufficient. Re-requesting later is allowed because the row is gone.
+    func rejectFriendRequest(fromUserID: String) async throws
 }
 
 // =============================================================================
@@ -69,6 +84,18 @@ struct MatchedContact: Identifiable, Hashable, Sendable {
         case email
         case phone
     }
+}
+
+/// A pending friend request as seen by the *receiver*. `id` is the sender's
+/// user ID — both the natural identifier for the Identifiable conformance
+/// (the receiver's ID is always the current user) and the value the
+/// Accept / Reject RPCs take.
+struct IncomingFriendRequest: Identifiable, Hashable, Sendable {
+    /// Sender's user ID. Doubles as the row's `Identifiable` key.
+    let id: String
+    let name: String
+    let avatarURL: URL?
+    let createdAt: Date
 }
 
 // =============================================================================
@@ -145,6 +172,13 @@ struct ContactsService: ContactsServiceProtocol {
 
     func findMatches(_ hashes: ContactHashes) async throws -> [MatchedContact] {
         guard !hashes.isEmpty else { return [] }
+        // Without an active session, the Edge Function returns 401 and
+        // the SDK surfaces that as a generic "non-2xx" — fail early with
+        // a precise error instead so the UI can guide the user to confirm
+        // their email / re-auth.
+        guard client.auth.currentUser != nil else {
+            throw ContactsError.notAuthenticated
+        }
         struct RequestBody: Encodable {
             let emailHashes: [String]
             let phoneHashes: [String]
@@ -194,6 +228,66 @@ struct ContactsService: ContactsServiceProtocol {
             .insert(Row(from_id: me, to_id: toUserID))
             .execute()
     }
+
+    // MARK: - Incoming requests inbox
+
+    func fetchIncomingRequests() async throws -> [IncomingFriendRequest] {
+        guard let me = client.auth.currentUser?.id.uuidString else {
+            throw ContactsError.notAuthenticated
+        }
+        // PostgREST embedded-resource join: select the request row + the
+        // sender's profile in a single round-trip. The relationship is
+        // declared by the `friend_requests.from_id → profiles.id` foreign
+        // key, so we hint it via `from:profiles!from_id(...)`.
+        struct Row: Decodable {
+            struct Sender: Decodable {
+                let id: String
+                let name: String?
+                let avatar_url: String?
+            }
+            let from_id: String
+            let created_at: Date
+            let from: Sender?
+        }
+        let rows: [Row] = try await client
+            .from("friend_requests")
+            .select("from_id,created_at,from:profiles!from_id(id,name,avatar_url)")
+            .eq("to_id", value: me)
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+        return rows.map { row in
+            IncomingFriendRequest(
+                id: row.from_id,
+                name: row.from?.name ?? "Someone",
+                avatarURL: row.from?.avatar_url.flatMap(URL.init(string:)),
+                createdAt: row.created_at
+            )
+        }
+    }
+
+    func acceptFriendRequest(fromUserID: String) async throws {
+        struct Params: Encodable { let p_from_id: String }
+        try await client.rpc(
+            "accept_friend_request",
+            params: Params(p_from_id: fromUserID)
+        ).execute()
+    }
+
+    func rejectFriendRequest(fromUserID: String) async throws {
+        guard let me = client.auth.currentUser?.id.uuidString else {
+            throw ContactsError.notAuthenticated
+        }
+        // RLS `friend_requests_delete` already restricts deletion to the
+        // two parties — we still scope by both keys so a malformed call
+        // can't delete an unrelated row by accident.
+        try await client
+            .from("friend_requests")
+            .delete()
+            .eq("from_id", value: fromUserID)
+            .eq("to_id", value: me)
+            .execute()
+    }
 }
 
 // =============================================================================
@@ -225,6 +319,35 @@ struct MockContactsService: ContactsServiceProtocol {
 
     func sendFriendRequest(toUserID: String) async throws {
         try await Task.sleep(for: .milliseconds(300))
+    }
+
+    func fetchIncomingRequests() async throws -> [IncomingFriendRequest] {
+        try await Task.sleep(for: .milliseconds(300))
+        // Two synthetic pending requests so the inbox UI has something to
+        // render in previews + offline-dev. Reusing the same mock profile
+        // IDs the rest of the mock stack uses so avatars resolve.
+        return [
+            IncomingFriendRequest(
+                id: "user_emma",
+                name: "Emma",
+                avatarURL: nil,
+                createdAt: Date().addingTimeInterval(-3600 * 2)
+            ),
+            IncomingFriendRequest(
+                id: "user_lucas",
+                name: "Lucas",
+                avatarURL: nil,
+                createdAt: Date().addingTimeInterval(-3600 * 30)
+            ),
+        ]
+    }
+
+    func acceptFriendRequest(fromUserID: String) async throws {
+        try await Task.sleep(for: .milliseconds(200))
+    }
+
+    func rejectFriendRequest(fromUserID: String) async throws {
+        try await Task.sleep(for: .milliseconds(200))
     }
 }
 

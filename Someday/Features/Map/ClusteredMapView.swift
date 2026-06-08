@@ -61,6 +61,31 @@ class PlaceAnnotation: MKPointAnnotation {
     }
 }
 
+/// Transient pin dropped by the AI chat when the user taps a
+/// `someday://suggest?...` link. Held by `MapViewModel.suggestionPins`,
+/// rendered in lime with a sparkle glyph so it reads as "AI proposed
+/// this spot" — visually distinct from the user's saved pins. Tapping
+/// it surfaces a small "Save to map" sheet (TBD); for now it just
+/// flags the spot.
+class SuggestionAnnotation: MKPointAnnotation {
+    /// Stable identity for sync. We let the SwiftUI layer derive it
+    /// from name+coord so two AI suggestions at slightly different
+    /// coords don't collapse together.
+    let suggestionID: String
+    let name: String
+    let category: String?
+
+    init(id: String, name: String, category: String?, coordinate: CLLocationCoordinate2D) {
+        self.suggestionID = id
+        self.name = name
+        self.category = category
+        super.init()
+        self.coordinate = coordinate
+        title = name
+        subtitle = category
+    }
+}
+
 struct ClusteredMapView: UIViewRepresentable {
     let places: [Place]
     @Binding var region: MKCoordinateRegion
@@ -71,10 +96,28 @@ struct ClusteredMapView: UIViewRepresentable {
     /// Default no-op keeps existing call sites compiling.
     var listNameFor: (Place) -> String? = { _ in nil }
 
+    /// Transient pins dropped by the AI chat when the user taps a
+    /// `someday://suggest?...` link. Rendered in lime so they read as
+    /// "AI proposed this spot" — visually distinct from saved pins.
+    /// Cleared from `MapViewModel.suggestionPins` after a few minutes
+    /// or when the user dismisses them.
+    var suggestions: [SuggestedPin] = []
+    /// Tap callback for a suggestion pin. The parent decides what to do
+    /// (currently: pulse the hint banner; future: open a save sheet).
+    var onSelectSuggestion: (SuggestedPin) -> Void = { _ in }
+
+    /// When true, the standard pulsing blue dot for the user's current
+    /// location is rendered on the map. Flipped on by MapHomeView's
+    /// locate-me button after the first successful permission grant,
+    /// so we never show the dot before the user explicitly asked for
+    /// it (matches the Info.plist promise of "only when you tap").
+    var showsUserLocation: Bool = false
+
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
         mapView.setRegion(region, animated: false)
+        mapView.showsUserLocation = showsUserLocation
 
         // Muted standard style with POIs hidden — calmer background so the colored pins shine.
         let config = MKStandardMapConfiguration(elevationStyle: .flat, emphasisStyle: .muted)
@@ -93,16 +136,50 @@ struct ClusteredMapView: UIViewRepresentable {
             ClusterPinAnnotationView.self,
             forAnnotationViewWithReuseIdentifier: MKMapViewDefaultClusterAnnotationViewReuseIdentifier
         )
+        mapView.register(
+            SuggestionPinAnnotationView.self,
+            forAnnotationViewWithReuseIdentifier: SuggestionPinAnnotationView.reuseID
+        )
 
         return mapView
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
         syncAnnotations(on: mapView)
+        syncSuggestions(on: mapView)
+        // Keep the user-location dot in sync with the parent's flag.
+        // Toggled by MapHomeView once `UserLocationService` returns a
+        // first fix — MKMapView then handles the pulsing blue dot
+        // (and live updates) for us.
+        if mapView.showsUserLocation != showsUserLocation {
+            mapView.showsUserLocation = showsUserLocation
+        }
 
         if Self.significantlyDifferent(mapView.region, region) {
             mapView.setRegion(region, animated: true)
         }
+    }
+
+    /// Diff `suggestions` against the AI-suggestion annotations already
+    /// on the map. We drop ones whose ID is gone and add ones not yet
+    /// present. Tiny lists (usually 1–3), so the naive sweep is fine.
+    private func syncSuggestions(on mapView: MKMapView) {
+        let existing = mapView.annotations.compactMap { $0 as? SuggestionAnnotation }
+        let newIDs = Set(suggestions.map(\.id))
+        let oldIDs = Set(existing.map(\.suggestionID))
+
+        let toRemove = existing.filter { !newIDs.contains($0.suggestionID) }
+        if !toRemove.isEmpty { mapView.removeAnnotations(toRemove) }
+
+        let toAdd = suggestions
+            .filter { !oldIDs.contains($0.id) }
+            .map { SuggestionAnnotation(
+                id: $0.id,
+                name: $0.name,
+                category: $0.category,
+                coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+            ) }
+        if !toAdd.isEmpty { mapView.addAnnotations(toAdd) }
     }
 
     private func syncAnnotations(on mapView: MKMapView) {
@@ -186,10 +263,28 @@ struct ClusteredMapView: UIViewRepresentable {
 
             if let pa = annotation as? PlaceAnnotation {
                 parent.onSelectPlace(pa.place)
+            } else if let sa = annotation as? SuggestionAnnotation {
+                if let match = parent.suggestions.first(where: { $0.id == sa.suggestionID }) {
+                    parent.onSelectSuggestion(match)
+                }
             } else if let cluster = annotation as? MKClusterAnnotation {
                 isProgrammatic = true
                 mapView.setRegion(zoomedRegion(for: cluster, in: mapView), animated: true)
             }
+        }
+
+        /// Custom view selector for suggestion pins. The default
+        /// dequeue uses the registered `PlacePinAnnotationView` for any
+        /// `MKAnnotation` that isn't a cluster — but we want the lime
+        /// AI pin for `SuggestionAnnotation` specifically.
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if annotation is SuggestionAnnotation {
+                return mapView.dequeueReusableAnnotationView(
+                    withIdentifier: SuggestionPinAnnotationView.reuseID,
+                    for: annotation
+                )
+            }
+            return nil   // fall back to the default registered class
         }
 
         /// Tight bounding-box region around the cluster's member annotations,
@@ -262,13 +357,24 @@ class PlacePinAnnotationView: MKAnnotationView {
         // List-colour override wins over the default heuristic so a pin's
         // colour matches the list it lives in (rose / blue / amber / …).
         let baseColor: UIColor
+        let usingListColor: Bool
         if let listName, !listName.isEmpty {
             baseColor = UIColor(ListVisualStyle.style(for: listName).color)
+            usingListColor = true
         } else {
             baseColor = Self.pinColor(for: place)
+            usingListColor = false
         }
+        // Visited-darkening only applies to default-coloured pins (no
+        // list). When a pin's colour is dictated by its list, the list
+        // identity is the signal we want to preserve — darkening it
+        // would make pins in the same list visually disagree depending
+        // on whether they happen to be reviewed. Keep them all on the
+        // list's exact palette so the list reads as one cluster.
         let isVisited = place.displayedRating?.value != nil
-        let fillColor = isVisited ? baseColor.darkened(by: 0.35) : baseColor
+        let fillColor = (isVisited && !usingListColor)
+            ? baseColor.darkened(by: 0.35)
+            : baseColor
 
         // Source-logo badge was previously rendered on the head for
         // unvisited, non-manual saves (Instagram pink, TikTok teal etc.)
@@ -387,6 +493,110 @@ class PlacePinAnnotationView: MKAnnotationView {
             return UIColor(SomedayColors.friendColor(for: abs(rid.hashValue)))
         }
         return UIColor(SomedayColors.primary)
+    }
+}
+
+// MARK: - AI Suggestion Pin
+
+/// Value type shipped from `MapViewModel` into `ClusteredMapView` for
+/// each AI-proposed venue. Kept simple so the SwiftUI side can stash
+/// them in an array and let `syncSuggestions` diff by id.
+struct SuggestedPin: Identifiable, Equatable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let category: String?
+    let latitude: Double
+    let longitude: Double
+}
+
+/// Distinct pin renderer for AI suggestions. Lime fill + sparkle glyph
+/// reads instantly as "this is an AI proposal, not one of your saved
+/// pins". Disables clustering so a tight cluster of suggestions still
+/// stands out next to the user's pin clusters.
+class SuggestionPinAnnotationView: MKAnnotationView {
+    static let reuseID = "SuggestionPin"
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        clusteringIdentifier = nil       // never cluster with saved pins
+        collisionMode = .circle
+        displayPriority = .required      // outrank place pins when overlapping
+        canShowCallout = true            // small native callout w/ name
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func prepareForDisplay() {
+        super.prepareForDisplay()
+
+        // Match `PlacePinAnnotationView` dimensions EXACTLY so the AI
+        // suggestion pin reads as the same family of pin, just lime —
+        // not a separate, oversized "AI banner" pin on the map. The
+        // 7pt bulb radius / 11pt tipDrop / 1.5pt white border are the
+        // saved-pin proportions; we just swap the fill for lime so the
+        // user can spot AI proposals at a glance without breaking the
+        // visual rhythm of the map.
+        let bulbRadius: CGFloat = 7
+        let tipDrop: CGFloat = 11
+        let borderWidth: CGFloat = 1.5
+
+        let canvasW = bulbRadius * 2
+        let canvasH = bulbRadius + tipDrop
+        let center = CGPoint(x: bulbRadius, y: bulbRadius)
+        let tip = CGPoint(x: bulbRadius, y: bulbRadius + tipDrop)
+
+        let limeUI = UIColor(SomedayColors.lime)
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
+        image = renderer.image { _ in
+            // White outline pin path (head + point).
+            UIColor.white.setFill()
+            Self.pinPath(center: center, radius: bulbRadius, tipDrop: tipDrop).fill()
+
+            // Lime body, inset by the border width on both bulb radius
+            // AND tipDrop. Matches the two-pass fill PlacePinAnnotationView
+            // uses, so the visual weight of the border is identical.
+            limeUI.setFill()
+            Self.pinPath(
+                center: center,
+                radius: bulbRadius - borderWidth,
+                tipDrop: tipDrop - borderWidth
+            ).fill()
+        }
+
+        // Anchor the pin's TIP on the coordinate — identical to the
+        // saved-pin anchor maths so the lat/lon registers in the same
+        // place visually.
+        centerOffset = CGPoint(
+            x: canvasW / 2 - tip.x,
+            y: canvasH / 2 - tip.y
+        )
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.25
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+    }
+
+    /// Same teardrop shape as `PlacePinAnnotationView.pinPath` — same
+    /// arguments, same maths, so the inner / outer pin layers inset
+    /// identically. Kept as a private static here (rather than
+    /// reaching across to PlacePinAnnotationView) to keep the two
+    /// classes self-contained.
+    private static func pinPath(center: CGPoint, radius r: CGFloat, tipDrop L: CGFloat) -> UIBezierPath {
+        let tip = CGPoint(x: center.x, y: center.y + L)
+        let beta = acos(max(-1, min(1, r / L)))
+        let rightAngle = CGFloat.pi / 2 - beta
+        let leftAngle = CGFloat.pi / 2 + beta
+        let rightTangent = CGPoint(
+            x: center.x + r * cos(rightAngle),
+            y: center.y + r * sin(rightAngle)
+        )
+        let path = UIBezierPath()
+        path.move(to: tip)
+        path.addLine(to: rightTangent)
+        path.addArc(withCenter: center, radius: r, startAngle: rightAngle, endAngle: leftAngle, clockwise: false)
+        path.close()
+        return path
     }
 }
 

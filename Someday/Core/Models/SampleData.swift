@@ -8,13 +8,38 @@ enum SampleData {
         avatarURL: URL(string: "https://i.pravatar.cc/150?img=11")
     )
 
+    /// Demo friends. Each one owns exactly ONE themed list pointing at
+    /// real Amsterdam restaurants — the legacy generic-named lists
+    /// (Barcelona / Vegan / Tokyo) referencing the older place_1…6
+    /// placeholders have been removed, so the lists grid no longer
+    /// reads as visually cluttered with mock data. The remaining lists
+    /// each have a distinctive identity for the AI chat to surface
+    /// ("what would Lucas pick in Jordaan?", "Sofia's tasting menus").
     static let friends: [UserProfile] = [
-        UserProfile(id: "user_emma", name: "Emma", email: "emma@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=5"), friendIDs: ["user_paul"], lists: ["Barcelona": ["place_1", "place_3"], "Vegan": ["place_2", "place_6"]]),
-        UserProfile(id: "user_lucas", name: "Lucas", email: "lucas@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=12"), friendIDs: ["user_paul"], lists: ["Tokyo": ["place_2", "place_6"], "Barcelona": ["place_3"]]),
-        UserProfile(id: "user_sofia", name: "Sofia", email: "sofia@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=9"), friendIDs: ["user_paul"], lists: ["Vegan": ["place_4", "place_1"], "Tokyo": ["place_5"]]),
-        UserProfile(id: "user_max", name: "Max", email: "max@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=7"), friendIDs: ["user_paul"], lists: ["Barcelona": ["place_1", "place_5"]]),
-        UserProfile(id: "user_olivia", name: "Olivia", email: "olivia@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=25"), friendIDs: ["user_paul"], lists: ["Tokyo": ["place_2"]]),
-        UserProfile(id: "user_noah", name: "Noah", email: "noah@example.com", avatarURL: URL(string: "https://i.pravatar.cc/150?img=53"), friendIDs: ["user_paul"], lists: ["Vegan": ["place_4", "place_5"]]),
+        UserProfile(
+            id: "user_emma", name: "Emma", email: "emma@example.com",
+            avatarURL: URL(string: "https://i.pravatar.cc/150?img=5"),
+            friendIDs: ["user_paul"],
+            lists: [
+                "Fine dining": ["place_resto_1", "place_resto_2"],
+            ]
+        ),
+        UserProfile(
+            id: "user_lucas", name: "Lucas", email: "lucas@example.com",
+            avatarURL: URL(string: "https://i.pravatar.cc/150?img=12"),
+            friendIDs: ["user_paul"],
+            lists: [
+                "Jordaan favourites": ["place_resto_3", "place_resto_4"],
+            ]
+        ),
+        UserProfile(
+            id: "user_sofia", name: "Sofia", email: "sofia@example.com",
+            avatarURL: URL(string: "https://i.pravatar.cc/150?img=9"),
+            friendIDs: ["user_paul"],
+            lists: [
+                "Tasting menus": ["place_resto_5", "place_resto_6"],
+            ]
+        ),
     ]
 
     /// A specific friend who's sharing a list with you on first launch.
@@ -74,5 +99,120 @@ enum SampleData {
         Place(id: "place_10", name: "Mediamatic ETEN", category: .food, latitude: 52.3712, longitude: 4.9075, source: .googleMaps, neighborhood: "Oost", tags: ["Greenhouse", "Vegan"], isSaved: true, ownerID: "user_paul"),
         Place(id: "place_11", name: "Cafe de Ceuvel", category: .drinks, latitude: 52.3989, longitude: 4.9117, source: .facebook, neighborhood: "Noord", tags: ["Sustainable", "Waterfront"], isSaved: true, ownerID: "user_paul"),
         Place(id: "place_12", name: "Bar Botanique", category: .drinks, latitude: 52.3604, longitude: 4.9265, source: .googleMaps, neighborhood: "Oost", tags: ["Tropical", "Plants"], isSaved: true, ownerID: "user_paul"),
+
+        // ─────────────────────────────────────────────────────────────
+        //  FRIEND RESTAURANT LISTS — 10 real Amsterdam places
+        // ─────────────────────────────────────────────────────────────
+        // Each of the five demo friends owns two well-known Amsterdam
+        // restaurants on a curated list. They surface on the map (any
+        // Place with coords + ownerID renders as a friend-tinted pin
+        // and flows into the AI chat's `friendPlaces` context tier) so
+        // the assistant can answer "what would <friend> recommend?" /
+        // "where for fine dining?" with grounded suggestions.
+        //
+        // Coordinates are approximate to the actual addresses (street-
+        // level — close enough for the pin to drop on the right block).
+        // Categories use `.food` for restaurants; `recommendedBy` +
+        // `friendRatings` tell the AI whose taste it's representing.
+
+        // — Emma · Fine dining
+        Place(
+            id: "place_resto_1", name: "Restaurant De Kas",
+            category: .food, latitude: 52.3406, longitude: 4.9332,
+            source: .friend, neighborhood: "Watergraafsmeer",
+            recommendedBy: "user_emma", visitedByIDs: ["user_emma"],
+            tags: ["Farm-to-table", "Greenhouse", "Tasting menu", "€€€"],
+            friendRatings: ["user_emma": 9.0],
+            ownerID: "user_emma"
+        ),
+        Place(
+            id: "place_resto_2", name: "Bougainville",
+            category: .food, latitude: 52.3729, longitude: 4.8919,
+            source: .friend, neighborhood: "Centrum",
+            recommendedBy: "user_emma", visitedByIDs: ["user_emma"],
+            tags: ["Hotel restaurant", "French-Asian", "Date night", "€€€€"],
+            friendRatings: ["user_emma": 8.8],
+            ownerID: "user_emma"
+        ),
+
+        // — Lucas · Jordaan favourites
+        Place(
+            id: "place_resto_3", name: "Toscanini",
+            category: .food, latitude: 52.3789, longitude: 4.8839,
+            source: .friend, neighborhood: "Jordaan",
+            recommendedBy: "user_lucas", visitedByIDs: ["user_lucas"],
+            tags: ["Italian", "Open kitchen", "Classic", "€€€"],
+            friendRatings: ["user_lucas": 8.9],
+            ownerID: "user_lucas"
+        ),
+        Place(
+            id: "place_resto_4", name: "Restaurant Daalder",
+            category: .food, latitude: 52.3796, longitude: 4.8835,
+            source: .friend, neighborhood: "Jordaan",
+            recommendedBy: "user_lucas", visitedByIDs: ["user_lucas"],
+            tags: ["Modern Dutch", "Tasting menu", "Michelin", "€€€€"],
+            friendRatings: ["user_lucas": 9.1],
+            ownerID: "user_lucas"
+        ),
+
+        // — Sofia · Tasting menus
+        Place(
+            id: "place_resto_5", name: "Choux",
+            category: .food, latitude: 52.3842, longitude: 4.9038,
+            source: .friend, neighborhood: "Centrum",
+            recommendedBy: "user_sofia", visitedByIDs: ["user_sofia"],
+            tags: ["Plant-forward", "Tasting menu", "Natural wine", "€€€"],
+            friendRatings: ["user_sofia": 9.2],
+            ownerID: "user_sofia"
+        ),
+        Place(
+            id: "place_resto_6", name: "Bridges",
+            category: .food, latitude: 52.3705, longitude: 4.8946,
+            source: .friend, neighborhood: "Centrum",
+            recommendedBy: "user_sofia", visitedByIDs: ["user_sofia"],
+            tags: ["Seafood", "Michelin", "Hotel restaurant", "€€€€"],
+            friendRatings: ["user_sofia": 8.7],
+            ownerID: "user_sofia"
+        ),
+
+        // — Max · Michelin starred
+        Place(
+            id: "place_resto_7", name: "Yamazato",
+            category: .food, latitude: 52.3458, longitude: 4.8954,
+            source: .friend, neighborhood: "De Pijp",
+            recommendedBy: "user_max", visitedByIDs: ["user_max"],
+            tags: ["Japanese", "Kaiseki", "Michelin", "€€€€"],
+            friendRatings: ["user_max": 9.3],
+            ownerID: "user_max"
+        ),
+        Place(
+            id: "place_resto_8", name: "Vinkeles",
+            category: .food, latitude: 52.3691, longitude: 4.8845,
+            source: .friend, neighborhood: "Negen Straatjes",
+            recommendedBy: "user_max", visitedByIDs: ["user_max"],
+            tags: ["French", "Michelin", "Tasting menu", "€€€€"],
+            friendRatings: ["user_max": 9.0],
+            ownerID: "user_max"
+        ),
+
+        // — Olivia · Hidden gems
+        Place(
+            id: "place_resto_9", name: "Wilde Zwijnen",
+            category: .food, latitude: 52.3622, longitude: 4.9407,
+            source: .friend, neighborhood: "Indische Buurt",
+            recommendedBy: "user_olivia", visitedByIDs: ["user_olivia"],
+            tags: ["Modern Dutch", "Seasonal", "Neighbourhood gem", "€€€"],
+            friendRatings: ["user_olivia": 8.8],
+            ownerID: "user_olivia"
+        ),
+        Place(
+            id: "place_resto_10", name: "Restaurant Sinne",
+            category: .food, latitude: 52.3525, longitude: 4.8967,
+            source: .friend, neighborhood: "De Pijp",
+            recommendedBy: "user_olivia", visitedByIDs: ["user_olivia"],
+            tags: ["Modern European", "Bib Gourmand", "Date night", "€€€"],
+            friendRatings: ["user_olivia": 8.9],
+            ownerID: "user_olivia"
+        ),
     ]
 }

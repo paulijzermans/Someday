@@ -34,8 +34,28 @@ struct ListsGridView: View {
     /// User picked "Delete list" from a tile's context menu. Same
     /// reasoning as merge — confirmation alert lives at MapHomeView.
     var onDeleteRequested: (_ name: String) -> Void = { _ in }
+    /// User dragged list `source` onto list `target` while in edit
+    /// (jiggle) mode — meaning they want to *reorder*, not merge. The
+    /// parent forwards to `MapViewModel.reorderCustomList(named:beforeName:)`.
+    var onReorderRequested: (_ source: String, _ beforeTarget: String) -> Void = { _, _ in }
     let onCreateList: () -> Void
     let onDismiss: () -> Void
+    /// Edit (home-screen jiggle) mode. Long-pressing any tile flips
+    /// this on for the whole grid. While on, tiles wiggle, show a ×
+    /// badge in the top-left, and drag-and-drop reorders instead of
+    /// merging. Tapping the "Done" pill or anywhere off-tile exits.
+    @State private var isEditing = false
+    /// Name of the tile currently being dragged in edit mode. Only one
+    /// tile drags at a time. `nil` when idle.
+    @State private var draggingName: String?
+    /// Live translation applied to the dragged tile while the finger
+    /// is down. Reset to `.zero` on drop / cancel.
+    @State private var dragOffset: CGSize = .zero
+    /// Recorded frame of every own-list tile, in the grid's coordinate
+    /// space. Populated via a PreferenceKey + GeometryReader background
+    /// on each tile, then read in the drag's `onEnded` to figure out
+    /// which slot the user released over.
+    @State private var tileFrames: [String: CGRect] = [:]
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -72,6 +92,15 @@ struct ListsGridView: View {
             unifiedGrid
         }
         .padding(.top, 16)
+        // Tap anywhere on the empty area of the lists tile to exit
+        // edit mode — same iPhone Home Screen idiom (tap outside any
+        // app to leave jiggle).
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isEditing {
+                withAnimation(.easeOut(duration: 0.18)) { isEditing = false }
+            }
+        }
         // Glass + shadow + frame come from `.floatingTile(size: .large)`
         // in `body`.
     }
@@ -82,16 +111,36 @@ struct ListsGridView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(SomedayColors.charcoal)
             Spacer()
-            Button { onDismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(SomedayColors.grayMedium)
-                    .frame(width: 28, height: 28)
-                    .background(SomedayColors.grayLight)
-                    .clipShape(Circle())
+            // In edit mode, the close button is replaced by a "Done"
+            // pill — same iPhone Home Screen idiom: tap Done to exit
+            // the jiggle, not the screen.
+            if isEditing {
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) { isEditing = false }
+                } label: {
+                    Text("Done")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(SomedayColors.primary))
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Button { onDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SomedayColors.grayMedium)
+                        .frame(width: 28, height: 28)
+                        .background(SomedayColors.grayLight)
+                        .clipShape(Circle())
+                }
+                .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.horizontal, 18)
+        .animation(.easeInOut(duration: 0.2), value: isEditing)
     }
 
     // MARK: - Unified grid
@@ -117,66 +166,8 @@ struct ListsGridView: View {
                 // which raises the confirmation alert. Long-press is the
                 // system default to start dragging — no extra gesture
                 // recogniser needed.
-                ForEach(customLists) { custom in
-                    let style = ListVisualStyle.style(for: custom.name)
-                    ListTile(
-                        name: custom.name,
-                        placeCount: custom.placeIDs.count,
-                        style: style,
-                        imageData: custom.imageData
-                    ) {
-                        onSelectList(custom.name)
-                        onDismiss()
-                    }
-                    // iOS Home-Screen-style context menu — long-press
-                    // brings up Delete. Coexists with `.draggable`: if
-                    // the user lifts and releases, the menu shows; if
-                    // they lift and start moving, drag takes over.
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            onDeleteRequested(custom.name)
-                        } label: {
-                            Label("Delete list", systemImage: "trash")
-                        }
-                    }
-                    // Custom drag preview: just the icon tile, no caption
-                    // beneath. Mirrors iOS Home Screen drag — the user
-                    // sees a single floating chip following the finger.
-                    .draggable(custom.name) {
-                        DragTilePreview(
-                            style: style,
-                            imageData: custom.imageData
-                        )
-                    }
-                    .dropDestination(for: String.self) { items, _ in
-                        // Take the first dropped name; reject same-list
-                        // drops (no-op merge) and drops from any source
-                        // not in our own customLists (dict/shared lists
-                        // aren't mergeable).
-                        guard let source = items.first,
-                              source != custom.name,
-                              customLists.contains(where: { $0.name == source })
-                        else { return false }
-                        // Hop up to the parent — it owns the confirmation
-                        // alert. We *don't* dismiss the tile here; the
-                        // parent does that after the alert closes so the
-                        // alert never overlaps a dismissing view.
-                        onMergeRequested(source, custom.name)
-                        return true
-                    }
-                    // Heavy "lift" haptic the moment the drag gesture
-                    // crosses iOS's long-press threshold. `.draggable`
-                    // doesn't expose a start hook, so we run a parallel
-                    // `LongPressGesture` with the same minimum duration
-                    // and fire on its `onEnded` — that lands exactly
-                    // when the drag preview lifts off. The two
-                    // gestures are kept independent via
-                    // `simultaneousGesture` so neither swallows the
-                    // other's events.
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.4)
-                            .onEnded { _ in Haptics.heavy() }
-                    )
+                ForEach(Array(customLists.enumerated()), id: \.element.id) { idx, custom in
+                    customListTile(custom: custom, index: idx)
                 }
 
                 // (2) Dict-based lists from the user model.
@@ -208,7 +199,130 @@ struct ListsGridView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
             .padding(.top, 6)
+            // Collect every own-list tile's frame in this named
+            // coordinate space so the manual drag in edit mode can
+            // hit-test the drop position against neighbours.
+            .coordinateSpace(name: ListsGridView.coordSpace)
+            .onPreferenceChange(TileFramePreferenceKey.self) { tileFrames = $0 }
         }
+    }
+
+    /// Coordinate space name shared by every own-list tile's frame
+    /// reporter and the drag gesture's location math.
+    fileprivate static let coordSpace = "listsGridReorder"
+
+    /// One own-list tile + all the gesture / visual state attached to
+    /// it. Extracted from the body so the (non-edit merge) and (edit
+    /// reorder) branches can be expressed with `if isEditing` instead
+    /// of stacking both gesture systems on every cell — which iOS would
+    /// arbitrate unpredictably.
+    @ViewBuilder
+    private func customListTile(custom: CustomList, index: Int) -> some View {
+        let style = ListVisualStyle.style(for: custom.name)
+        let isThisDragging = (draggingName == custom.name)
+
+        ListTile(
+            name: custom.name,
+            placeCount: custom.placeIDs.count,
+            style: style,
+            imageData: custom.imageData,
+            isEditing: isEditing,
+            wiggleSeed: index,
+            onDeleteTap: { onDeleteRequested(custom.name) },
+            action: {
+                // Tap is suppressed in edit mode — the × badge and the
+                // tile movement own the gesture surface there.
+                guard !isEditing else { return }
+                onSelectList(custom.name)
+                onDismiss()
+            }
+        )
+        // Record this tile's resting frame so the drag's `onEnded` can
+        // figure out which slot the user released over. We DON'T
+        // record the offset-during-drag — only the natural frame —
+        // because that's the slot the dragged tile would target.
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .preference(
+                        key: TileFramePreferenceKey.self,
+                        value: [custom.name: geo.frame(in: .named(ListsGridView.coordSpace))]
+                    )
+            }
+        )
+        // Lift + offset while dragging. zIndex pulls the dragged tile
+        // above its neighbours so it doesn't disappear behind them.
+        // `animation(nil, value:)` skips animation on the drag offset
+        // itself (we want it to track the finger 1:1) but the snap-
+        // back on cancel still animates via the explicit
+        // `withAnimation` in `onEnded`.
+        .scaleEffect(isThisDragging ? 1.08 : 1.0)
+        .opacity(isThisDragging ? 0.96 : 1.0)
+        .shadow(color: .black.opacity(isThisDragging ? 0.18 : 0), radius: 10, y: 4)
+        .offset(isThisDragging ? dragOffset : .zero)
+        .zIndex(isThisDragging ? 100 : 0)
+        .animation(.easeInOut(duration: 0.18), value: isThisDragging)
+        // Non-edit mode keeps the system drag-and-drop merge: long-
+        // press starts a system drag with a clean floating preview;
+        // drop on another tile raises the merge alert. The context
+        // menu also lives here — it's the entry point to edit mode.
+        .modifier(NonEditDragAndDrop(
+            isActive: !isEditing,
+            name: custom.name,
+            style: style,
+            imageData: custom.imageData,
+            customLists: customLists,
+            onEnterEditMode: {
+                Haptics.heavy()
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
+                    isEditing = true
+                }
+            },
+            onMergeRequested: onMergeRequested,
+            onDeleteRequested: onDeleteRequested
+        ))
+        // Edit mode: a manual DragGesture that moves THIS tile as one
+        // visual element. On release we hit-test the dropped position
+        // against the recorded tileFrames and pick the slot to insert
+        // before. No `.draggable` here — that double-attached the
+        // gesture system and produced the "two elements" feeling.
+        .gesture(
+            isEditing
+                ? DragGesture(coordinateSpace: .named(ListsGridView.coordSpace))
+                    .onChanged { value in
+                        if draggingName == nil {
+                            draggingName = custom.name
+                            Haptics.tap()
+                        }
+                        dragOffset = value.translation
+                    }
+                    .onEnded { value in
+                        // Compute the centre of the tile in its
+                        // *dropped* position — its resting frame plus
+                        // the final translation — then find which
+                        // recorded tile frame contains that point.
+                        let dropped: String? = {
+                            guard let mine = tileFrames[custom.name] else { return nil }
+                            let centre = CGPoint(
+                                x: mine.midX + value.translation.width,
+                                y: mine.midY + value.translation.height
+                            )
+                            return tileFrames.first(where: { name, frame in
+                                name != custom.name && frame.contains(centre)
+                            })?.key
+                        }()
+                        if let target = dropped {
+                            onReorderRequested(custom.name, target)
+                        }
+                        // Reset drag state. Use spring so a "no-drop"
+                        // release snaps cleanly back to the slot.
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                            draggingName = nil
+                            dragOffset = .zero
+                        }
+                    }
+                : nil
+        )
     }
 }
 
@@ -254,6 +368,16 @@ struct FriendListGridTile: View {
                         .lineLimit(1)
                 }
             }
+            // Same outer wrapper as ListTile so own + shared + add
+            // tiles share a single silhouette in the grid.
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            // Translucent liquid-glass material — the tile "floats"
+            // over the map blur instead of sitting on an opaque white
+            // card. Same `.glassEffect` material used by the floating
+            // tile container itself and by the chat bubbles, so the
+            // whole UI reads as one glass surface.
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
         }
         .buttonStyle(.plain)
     }
@@ -296,9 +420,15 @@ struct FriendListGridTile: View {
 
 // MARK: - Tile
 
-/// Single list cell — colored shape + name + place count.
-/// Public so the Activity feed can drop the same tile inside its expandable
-/// person rows, keeping the visual language consistent across the app.
+/// Single list cell — one rounded container that wraps the colored
+/// icon square AND the title / count beneath, so the whole thing reads
+/// as ONE iPhone-style app tile rather than a stack of two visuals.
+///
+/// In edit mode the tile wiggles (home-screen pattern) and shows a ×
+/// badge in the top-left corner that fires `onDeleteTap`.
+///
+/// Public so the Activity feed can drop the same tile inside its
+/// expandable person rows, keeping the visual language consistent.
 struct ListTile: View {
     let name: String
     let placeCount: Int
@@ -306,7 +436,21 @@ struct ListTile: View {
     /// Cover photo bytes if the user attached one when creating the list.
     /// When set, replaces the colored-shape background.
     var imageData: Data? = nil
+    /// Home-screen jiggle mode flag (driven by `ListsGridView.isEditing`).
+    /// While true, the tile wiggles, shows a × badge, and ignores taps.
+    var isEditing: Bool = false
+    /// Per-tile phase seed so adjacent tiles don't wiggle in unison.
+    /// `ListsGridView` passes the tile's index here.
+    var wiggleSeed: Int = 0
+    /// Fired when the user taps the × badge while in edit mode. The
+    /// parent typically forwards to its `onDeleteRequested` callback.
+    var onDeleteTap: () -> Void = {}
     let action: () -> Void
+
+    /// Animation phase that toggles to drive `.rotationEffect`. Flipped
+    /// in `.onChange(of: isEditing)` so the rotation only animates
+    /// while editing — wiggling at rest would be distracting.
+    @State private var wigglePhase = false
 
     var body: some View {
         Button(action: action) {
@@ -323,20 +467,79 @@ struct ListTile: View {
                         .foregroundColor(SomedayColors.grayMedium)
                 }
             }
+            // ONE rounded container around the icon + text. The fill
+            // is near-white with a hairline border so the wrapper reads
+            // as a single tile (the iPhone-icon-with-label gestalt)
+            // without competing visually with the colored icon inside.
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            // Translucent liquid-glass material — the tile "floats"
+            // over the map blur instead of sitting on an opaque white
+            // card. Same `.glassEffect` material used by the floating
+            // tile container itself and by the chat bubbles, so the
+            // whole UI reads as one glass surface.
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
         }
         .buttonStyle(.plain)
+        // ---- Home-screen jiggle + × badge ----
+        // Rotation alternates between ±1.5° on a repeat-forever
+        // animation. Seed-based delay keeps adjacent tiles out of
+        // phase. Lift the rotation back to .zero when editing flips
+        // off so old tiles don't stay tilted.
+        .rotationEffect(
+            isEditing
+                ? .degrees(wigglePhase ? 1.5 : -1.5)
+                : .zero
+        )
+        .animation(
+            isEditing
+                ? .easeInOut(duration: 0.13)
+                    .repeatForever(autoreverses: true)
+                    .delay(Double(wiggleSeed % 4) * 0.03)
+                : .easeOut(duration: 0.18),
+            value: wigglePhase
+        )
+        .onChange(of: isEditing) { _, on in
+            // Kick the phase so the repeating animation starts. The
+            // `.animation` modifier above only animates `wigglePhase`
+            // changes, so toggling it here is what arms / disarms the
+            // wiggle.
+            wigglePhase = on
+        }
+        .overlay(alignment: .topLeading) {
+            if isEditing {
+                Button {
+                    Haptics.tap()
+                    onDeleteTap()
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .heavy))
+                        .foregroundColor(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.black.opacity(0.85)))
+                        .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .offset(x: -6, y: -6)
+                // Counter-rotate the badge so it stays still while the
+                // tile beneath wiggles — same trick iOS uses on the
+                // home screen so the × doesn't visually shake.
+                .rotationEffect(
+                    isEditing
+                        ? .degrees(wigglePhase ? -1.5 : 1.5)
+                        : .zero
+                )
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
     }
 
-    /// Square tile face — either the cover photo (with the deterministic
-    /// shape icon overlaid for identity) or the colored-shape fallback.
-    /// Both variants use the same `RoundedRectangle` shape used by
-    /// `AddListTile` so all cells in the grid share one silhouette.
+    /// Square colored icon face — either the cover photo (with the
+    /// deterministic shape icon overlaid for identity) or the
+    /// colored-shape fallback. Same silhouette across both variants.
     @ViewBuilder
     private var tileBody: some View {
         if let imageData, let uiImage = UIImage(data: imageData) {
-            // Square photo tile — the photo speaks for itself, no shape
-            // overlay competing for attention. Subtle bottom gradient keeps
-            // the place-count caption readable when the photo is bright.
             RoundedRectangle(cornerRadius: 18)
                 .fill(style.color.opacity(0.16))
                 .aspectRatio(1, contentMode: .fit)
@@ -419,8 +622,74 @@ private struct AddListTile: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(SomedayColors.grayMedium)
             }
+            // Match the floating glass treatment used by the other
+            // tiles so all four cell variants (own, dict, friend, add)
+            // share one silhouette.
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Reorder plumbing
+
+/// Collects every own-list tile's frame (in the grid's named
+/// coordinate space) so the manual drag in edit mode can hit-test
+/// which slot the user released over. SwiftUI merges per-tile values
+/// into a single dictionary at the parent.
+private struct TileFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// `.draggable` + `.dropDestination` + `.contextMenu` — only attached
+/// when we're NOT in edit mode. Wrapping these as a ViewModifier (vs
+/// inline) lets the call site cleanly toggle the whole system drag-
+/// and-drop off, so the manual `DragGesture` we attach for edit-mode
+/// reorder doesn't fight iOS's gesture arbiter.
+private struct NonEditDragAndDrop: ViewModifier {
+    let isActive: Bool
+    let name: String
+    let style: ListVisualStyle
+    let imageData: Data?
+    let customLists: [CustomList]
+    let onEnterEditMode: () -> Void
+    let onMergeRequested: (_ source: String, _ target: String) -> Void
+    let onDeleteRequested: (_ name: String) -> Void
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content
+                .contextMenu {
+                    Button {
+                        onEnterEditMode()
+                    } label: {
+                        Label("Edit lists", systemImage: "square.grid.2x2")
+                    }
+                    Button(role: .destructive) {
+                        onDeleteRequested(name)
+                    } label: {
+                        Label("Delete list", systemImage: "trash")
+                    }
+                }
+                .draggable(name) {
+                    DragTilePreview(style: style, imageData: imageData)
+                }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let source = items.first,
+                          source != name,
+                          customLists.contains(where: { $0.name == source })
+                    else { return false }
+                    onMergeRequested(source, name)
+                    return true
+                }
+        } else {
+            content
+        }
     }
 }
 

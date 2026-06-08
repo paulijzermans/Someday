@@ -10,7 +10,10 @@ import SwiftUI
 ///   • Maybe later — dismiss
 ///   • Preview     — drop the user onto the map in preview mode with
 ///                   Add / Cancel buttons under the pins
-///   • Add         — skip the preview and import the places straight away
+///   • Add ▼       — long-press or tap-and-hold reveals a menu where
+///                   the user picks how long the list stays accessible
+///                   (30 days, 90 days, or forever). Tapping the
+///                   primary button is a shortcut for "forever".
 struct ShareRequestTileView: View {
     let person: UserProfile
     let listName: String
@@ -19,8 +22,12 @@ struct ShareRequestTileView: View {
     /// data, even though we no longer render the place rows.
     let places: [Place]
     let onPreview: () -> Void
-    /// Imports the places to the user's map without the preview step.
-    let onAdd: () -> Void
+    /// Imports the places to the user's map. The `duration` parameter
+    /// captures how long the receiver wants the shared list to remain
+    /// accessible — `.forever` means a permanent add, `.days30` /
+    /// `.days90` should mark the list with an expiry so a future
+    /// background sweep can prune it.
+    let onAdd: (ShareAccessDuration) -> Void
     let onDismiss: () -> Void
 
     private var placeCount: Int { places.count }
@@ -154,14 +161,39 @@ struct ShareRequestTileView: View {
                 .cornerRadius(14)
             }
 
-            Button {
-                onAdd()
+            // Add — the primary "yes, take this list" CTA. A native
+            // Menu lets the user pick the access duration without
+            // blowing up the tile's three-button footprint. Tapping the
+            // chevron OR the body opens the menu; primary-press on the
+            // label itself is the menu trigger.
+            Menu {
+                Button {
+                    Haptics.tap()
+                    onAdd(.days30)
+                } label: {
+                    Label("Add for 30 days", systemImage: "calendar")
+                }
+                Button {
+                    Haptics.tap()
+                    onAdd(.days90)
+                } label: {
+                    Label("Add for 90 days", systemImage: "calendar")
+                }
+                Button {
+                    Haptics.tap()
+                    onAdd(.forever)
+                } label: {
+                    Label("Add forever", systemImage: "infinity")
+                }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .bold))
                     Text("Add")
                         .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .opacity(0.7)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 13)
@@ -169,6 +201,41 @@ struct ShareRequestTileView: View {
                 .background(SomedayColors.butter)
                 .cornerRadius(14)
             }
+            .menuOrder(.fixed)
+            .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
+        }
+    }
+}
+
+// MARK: - Wire type
+
+/// How long the receiver wants the shared list to stay accessible after
+/// they tap Add. Persisted alongside the list membership so a future
+/// "expire stale shared lists" sweep can revoke access at the right
+/// time. `.forever` is the no-op case used for unrestricted adds.
+enum ShareAccessDuration: Equatable, Sendable {
+    case days30
+    case days90
+    case forever
+
+    /// Concrete expiry date for a fresh accept, or `nil` for `.forever`.
+    /// Anchored to the moment the user taps Add — call this once and
+    /// stash the result on the list row.
+    func expiryDate(from start: Date = .now) -> Date? {
+        switch self {
+        case .days30:  return Calendar.current.date(byAdding: .day, value: 30, to: start)
+        case .days90:  return Calendar.current.date(byAdding: .day, value: 90, to: start)
+        case .forever: return nil
+        }
+    }
+
+    /// Compact label suitable for the "added until 14 Aug" footer chip
+    /// we'll surface on shared-list tiles once they have expiries.
+    var shortLabel: String {
+        switch self {
+        case .days30:  return "30 days"
+        case .days90:  return "90 days"
+        case .forever: return "Forever"
         }
     }
 }

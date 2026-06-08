@@ -66,50 +66,74 @@ struct PlaceCardSheet: View {
                 Capsule()
                     .fill(Color(.systemGray4))
                     .frame(width: 36, height: 4)
-                    .padding(.top, 12)
-                    .padding(.bottom, 16)
-
-                heroImage
-                    .frame(height: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(alignment: .bottomLeading) {
-                        sourceBadge
-                            .padding(12)
-                    }
-                    .padding(.horizontal, 20)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(place.name)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(SomedayColors.charcoal)
-                        Spacer()
-                        if let review = place.review {
-                            overallBadge(review.overallFormatted)
-                        }
-                    }
-                    .padding(.top, 14)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: place.category.icon)
-                            .font(.system(size: 13))
-                        Text(place.category.displayName)
-                        Text("•")
-                        Text(place.neighborhood)
-                    }
-                    .font(.system(size: 14))
-                    .foregroundColor(SomedayColors.grayMedium)
-                    .padding(.top, 4)
+                    .padding(.top, 10)
                     .padding(.bottom, 12)
 
+                // Header: square hero on the left, title + meta on the
+                // right. Replaces the old full-width 180pt photo banner
+                // so the card feels tighter and reads as a "place row"
+                // rather than a poster. The 96pt square keeps the photo
+                // tappable + recognisable without dominating.
+                HStack(alignment: .top, spacing: 14) {
+                    heroImage
+                        .frame(width: 96, height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .overlay(alignment: .bottomLeading) {
+                            sourceBadge
+                                .padding(5)
+                        }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(place.name)
+                                .font(.system(size: 19, weight: .bold))
+                                .foregroundColor(SomedayColors.charcoal)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Spacer()
+                            if let review = place.review {
+                                overallBadge(review.overallFormatted)
+                            }
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: place.category.icon)
+                                .font(.system(size: 12))
+                            Text(place.category.displayName)
+                            Text("•")
+                            Text(place.neighborhood)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .font(.system(size: 13))
+                        .foregroundColor(SomedayColors.grayMedium)
+
+                        // Friends who've been here — compact chip with
+                        // overlapping avatars + "N friend(s) visited". Sits
+                        // beside the hero so the social proof is visible on
+                        // first glance, not buried below the meta row as a
+                        // separate section. Hidden when no one has been.
+                        if !visitedFriends.isEmpty {
+                            friendsVisitedChip
+                                .padding(.top, 2)
+                        }
+                    }
+                    // Top-align the text column to the photo so a short
+                    // title sits at the photo's top edge, not floating
+                    // in the middle of the row.
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+
+                VStack(alignment: .leading, spacing: 0) {
                     if place.review != nil {
                         reviewSection
                     }
 
-                    if !visitedFriends.isEmpty {
-                        friendsSection
-                    }
-
+                    // Friends section moved up next to the hero image as a
+                    // compact chip. Old large stack of 36pt avatars retired —
+                    // the meta column above already shows who's been.
                     actionsSection
 
                     // Inline booking-platforms panel that expands directly
@@ -127,7 +151,10 @@ struct PlaceCardSheet: View {
                 // Leave room for the bottom tab bar + feedback pill so the
                 // action buttons aren't covered. Tab bar ≈ 68pt above the
                 // safe-area bottom, then ~16pt margin and the feedback pill.
-                .padding(.bottom, 130)
+                // Tightened from 130pt now that the hero is a 96pt square
+                // instead of a 180pt banner — keeps the card visually
+                // grounded without burning extra vertical real estate.
+                .padding(.bottom, 116)
             }
             .background(.white)
             .cornerRadius(20)
@@ -221,24 +248,35 @@ struct PlaceCardSheet: View {
     private func overallBadge(_ grade: String) -> some View {
         VStack(spacing: 0) {
             Text(grade)
-                .font(.system(size: 20, weight: .heavy))
+                .font(.system(size: 16, weight: .heavy))
                 .foregroundColor(SomedayColors.green)
             Text("/ 10")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundColor(SomedayColors.green.opacity(0.7))
         }
-        .frame(width: 52, height: 52)
+        .frame(width: 42, height: 42)
         .background(SomedayColors.butter)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Source badge in the bottom-left of the hero image. When the place
     /// has a `sourceURL` (Instagram Reel / TikTok / Maps share), the badge
-    /// becomes a Button that deep-links back to the original post. For
-    /// manually-added places (no URL), it stays as a static label.
+    /// becomes a Button that deep-links back to the original post.
+    /// Manually-added places get NO badge — the "Added manually" label was
+    /// noise on the card's tight 96pt hero (there's nothing to link to and
+    /// the user knows they typed it in).
     @ViewBuilder
     private var sourceBadge: some View {
-        if let url = place.sourceURL {
+        // Two cases produce no badge at all:
+        //   • `.manual` — "Added manually" was noise. Nothing to
+        //     link to and the user knows they typed it in.
+        //   • `.friend` — "from a friend" is already obvious from the
+        //     friend avatar / friend chip elsewhere on the card, so
+        //     the badge just doubled the signal without paying for
+        //     its visual weight on the 96pt hero.
+        if place.source == .manual || place.source == .friend {
+            EmptyView()
+        } else if let url = place.sourceURL {
             Button { openURL(url) } label: { sourceBadgeContent }
                 .buttonStyle(.plain)
         } else {
@@ -248,26 +286,28 @@ struct PlaceCardSheet: View {
 
     /// The visual content of the source badge, hoisted out so the
     /// tappable + non-tappable branches above share a single body.
+    /// Sized to feel like a chip on the 96pt hero square — the asset
+    /// is small enough to read at a glance without crowding the photo.
     @ViewBuilder
     private var sourceBadgeContent: some View {
         if let assetName = place.source.assetName, UIImage(named: assetName) != nil {
             Image(assetName)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
+                .frame(width: 22, height: 22)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
         } else {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Image(systemName: place.source.icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: 9))
                 Text(place.source.label)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
             .background(.white.opacity(0.9))
-            .cornerRadius(8)
+            .cornerRadius(6)
         }
     }
 
@@ -309,41 +349,59 @@ struct PlaceCardSheet: View {
         .padding(.bottom, 12)
     }
 
-    private var friendsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Friends who've been here")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(SomedayColors.grayMedium)
+    /// Compact "friends who've been here" chip used inline in the header
+    /// (right column, under the category/neighborhood row). Shows up to
+    /// three overlapping mini-avatars and a label like "2 friends visited".
+    /// Replaces the older large `friendsSection` row.
+    @ViewBuilder
+    private var friendsVisitedChip: some View {
+        let avatarSize: CGFloat = 20
+        let maxShown = 3
+        let shown = Array(visitedFriends.prefix(maxShown))
+        let extra = visitedFriends.count - shown.count
+        let label = visitedFriends.count == 1
+            ? "1 friend visited"
+            : "\(visitedFriends.count) friends visited"
 
-            HStack(spacing: 10) {
-                ForEach(visitedFriends) { friend in
-                    VStack(spacing: 4) {
-                        AsyncImage(url: friend.avatarURL) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image.resizable().scaledToFill()
-                            default:
-                                Circle().fill(SomedayColors.primary.opacity(0.3))
-                                    .overlay(
-                                        Text(friend.initials.prefix(1))
-                                            .font(.system(size: 11, weight: .bold))
-                                            .foregroundColor(.white)
-                                    )
-                            }
+        HStack(spacing: 6) {
+            // Overlapping avatar stack — same trick the iOS Photos app
+            // uses for shared albums. Negative spacing pulls each into
+            // the previous one's right edge.
+            HStack(spacing: -6) {
+                ForEach(Array(shown.enumerated()), id: \.element.id) { _, friend in
+                    AsyncImage(url: friend.avatarURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        default:
+                            Circle()
+                                .fill(SomedayColors.primary.opacity(0.35))
+                                .overlay(
+                                    Text(friend.initials.prefix(1))
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                )
                         }
-                        .frame(width: 36, height: 36)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(SomedayColors.primary.opacity(0.5), lineWidth: 2))
-
-                        Text(friend.name)
-                            .font(.system(size: 11))
-                            .foregroundColor(SomedayColors.charcoal)
                     }
+                    .frame(width: avatarSize, height: avatarSize)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(.white, lineWidth: 1.5))
                 }
-                Spacer()
+                if extra > 0 {
+                    Text("+\(extra)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: avatarSize, height: avatarSize)
+                        .background(Circle().fill(SomedayColors.primary))
+                        .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                }
             }
+
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(SomedayColors.grayMedium)
+                .lineLimit(1)
         }
-        .padding(.bottom, 12)
     }
 
     private var actionsSection: some View {
