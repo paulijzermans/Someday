@@ -60,12 +60,23 @@
 		A00210 /* AvailabilityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00210 /* AvailabilityService.swift */; };
 		A00250 /* ReservationCheckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00250 /* ReservationCheckService.swift */; };
 		A00260 /* ContactsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00260 /* ContactsService.swift */; };
+		A00280 /* CityResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00280 /* CityResolver.swift */; };
+		A00281 /* UserLocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00281 /* UserLocationService.swift */; };
+		A00282 /* SpeechRecognitionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00282 /* SpeechRecognitionService.swift */; };
+		A00270 /* SomedayPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00270 /* SomedayPreferences.swift */; };
+		A00271 /* AccountSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00271 /* AccountSettingsView.swift */; };
+		A00272 /* PrivacyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00272 /* PrivacyView.swift */; };
+		A00273 /* NotificationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00273 /* NotificationsView.swift */; };
+		A00274 /* PlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00274 /* PlanView.swift */; };
 		A00211 /* AIAvailabilityBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00211 /* AIAvailabilityBar.swift */; };
 		A00220 /* ListServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00220 /* ListServiceProtocol.swift */; };
 		A00221 /* SupabaseListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00221 /* SupabaseListService.swift */; };
 		A00222 /* MockListService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00222 /* MockListService.swift */; };
 		A00230 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00230 /* Haptics.swift */; };
 		A00240 /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00240 /* ChatService.swift */; };
+		A00310 /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00310 /* AISettings.swift */; };
+		A00311 /* AIAssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00311 /* AIAssistantSettingsView.swift */; };
+		A00312 /* ChatMessageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00312 /* ChatMessageRenderer.swift */; };
 		A00241 /* ChatSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00241 /* ChatSheet.swift */; };
 		BS001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FS001 /* ShareViewController.swift */; };
 		BS002 /* SomedayShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = FS003 /* SomedayShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -130,13 +141,26 @@
 		F00210 /* AvailabilityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityService.swift; sourceTree = "<group>"; };
 		F00250 /* ReservationCheckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReservationCheckService.swift; sourceTree = "<group>"; };
 		F00260 /* ContactsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsService.swift; sourceTree = "<group>"; };
+		F00280 /* CityResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CityResolver.swift; sourceTree = "<group>"; };
+		F00281 /* UserLocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserLocationService.swift; sourceTree = "<group>"; };
+		F00282 /* SpeechRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognitionService.swift; sourceTree = "<group>"; };
+		D00282 /* Voice */ = {isa = PBXGroup; children = (F00282 /* SpeechRecognitionService.swift */,); path = Voice; sourceTree = "<group>"; };
+		F00270 /* SomedayPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SomedayPreferences.swift; sourceTree = "<group>"; };
+		F00271 /* AccountSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSettingsView.swift; sourceTree = "<group>"; };
+		F00272 /* PrivacyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyView.swift; sourceTree = "<group>"; };
+		F00273 /* NotificationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsView.swift; sourceTree = "<group>"; };
+		F00274 /* PlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanView.swift; sourceTree = "<group>"; };
 		D00260 /* Friends */ = {isa = PBXGroup; children = (F00260 /* ContactsService.swift */,); path = Friends; sourceTree = "<group>"; };
+		D00280 /* Location */ = {isa = PBXGroup; children = (F00280 /* CityResolver.swift */, F00281 /* UserLocationService.swift */,); path = Location; sourceTree = "<group>"; };
 		F00211 /* AIAvailabilityBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAvailabilityBar.swift; sourceTree = "<group>"; };
 		F00220 /* ListServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListServiceProtocol.swift; sourceTree = "<group>"; };
 		F00221 /* SupabaseListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseListService.swift; sourceTree = "<group>"; };
 		F00222 /* MockListService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockListService.swift; sourceTree = "<group>"; };
 		F00230 /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		F00240 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
+		F00310 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
+		F00311 /* AIAssistantSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantSettingsView.swift; sourceTree = "<group>"; };
+		F00312 /* ChatMessageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessageRenderer.swift; sourceTree = "<group>"; };
 		F00241 /* ChatSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSheet.swift; sourceTree = "<group>"; };
 		F00096 /* ShareRequestTileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareRequestTileView.swift; sourceTree = "<group>"; };
 		F00100 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -257,6 +281,7 @@
 				F00001 /* SomedayApp.swift */,
 				F00002 /* AppState.swift */,
 				F00003 /* ServiceContainer.swift */,
+				F00270 /* SomedayPreferences.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -331,6 +356,8 @@
 				D00210 /* Reservation */,
 				D00240 /* Chat */,
 				D00260 /* Friends */,
+				D00280 /* Location */,
+				D00282 /* Voice */,
 				F00033 /* MapKitSearchService.swift */,
 			);
 			path = Services;
@@ -340,6 +367,7 @@
 			isa = PBXGroup;
 			children = (
 				F00240 /* ChatService.swift */,
+				F00310 /* AISettings.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -437,6 +465,7 @@
 				F00074 /* ClusteredMapView.swift */,
 				F00075 /* ImportListView.swift */,
 				F00102 /* MapSubcomponents.swift */,
+				F00312 /* ChatMessageRenderer.swift */,
 			);
 			path = Map;
 			sourceTree = "<group>";
@@ -505,6 +534,11 @@
 			isa = PBXGroup;
 			children = (
 				F00097 /* ProfileView.swift */,
+				F00271 /* AccountSettingsView.swift */,
+				F00272 /* PrivacyView.swift */,
+				F00273 /* NotificationsView.swift */,
+				F00274 /* PlanView.swift */,
+				F00311 /* AIAssistantSettingsView.swift */,
 			);
 			path = Profile;
 			sourceTree = "<group>";
@@ -687,12 +721,23 @@
 				A00210 /* AvailabilityService.swift in Sources */,
 				A00250 /* ReservationCheckService.swift in Sources */,
 				A00260 /* ContactsService.swift in Sources */,
+				A00280 /* CityResolver.swift in Sources */,
+				A00281 /* UserLocationService.swift in Sources */,
+				A00282 /* SpeechRecognitionService.swift in Sources */,
+				A00270 /* SomedayPreferences.swift in Sources */,
+				A00271 /* AccountSettingsView.swift in Sources */,
+				A00272 /* PrivacyView.swift in Sources */,
+				A00273 /* NotificationsView.swift in Sources */,
+				A00274 /* PlanView.swift in Sources */,
 				A00211 /* AIAvailabilityBar.swift in Sources */,
 				A00220 /* ListServiceProtocol.swift in Sources */,
 				A00221 /* SupabaseListService.swift in Sources */,
 				A00222 /* MockListService.swift in Sources */,
 				A00230 /* Haptics.swift in Sources */,
 				A00240 /* ChatService.swift in Sources */,
+				A00310 /* AISettings.swift in Sources */,
+				A00311 /* AIAssistantSettingsView.swift in Sources */,
+				A00312 /* ChatMessageRenderer.swift in Sources */,
 				A00241 /* ChatSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
