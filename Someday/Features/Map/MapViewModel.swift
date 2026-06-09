@@ -33,6 +33,20 @@ final class MapViewModel {
     /// Lists overlay (or cancel out). Non-nil = the Lists picker is in
     /// "stash these places" mode and selecting a list runs the commit.
     var pendingAddToListPlaces: [Place]?
+    /// When non-nil, the Lists overlay is in "membership editor" mode for
+    /// this place. Tiles render with a thick border around any list the
+    /// place is in; tapping a list toggles membership (in → remove, out
+    /// → add). The pin_tile is hidden while editing and restored on
+    /// dismiss so the user can confirm the new chip state.
+    ///
+    /// Distinct from `pendingAddToListPlaces` (the import-stash-and-commit
+    /// flow) because:
+    ///   • Membership editing operates on ONE existing pin, not a batch.
+    ///   • Each tap is an immediate, idempotent toggle — no stash, no commit.
+    ///   • Multi-membership is allowed: a place can live in any number of
+    ///     lists at once. (The old single-list invariant is intentionally
+    ///     dropped here at the user's request.)
+    var membershipEditingPlace: Place?
 
     // MARK: - AI Availability
     //
@@ -185,10 +199,30 @@ final class MapViewModel {
     /// cheap on `id`.
     var aiSuggestionPins: [SuggestedPin] = []
 
+    /// Ordered list backing the suggestion tile above the nav bar.
+    /// One entry → single-pin info card (no swipe). Multiple entries →
+    /// horizontal carousel where swiping pages pans the map. Same
+    /// state powers both paths so the bottom slot has a single source
+    /// of truth.
+    var discoverAllSuggestions: [SuggestedPin] = []
+
+    /// ID of the AI-suggestion pin the map should be visually
+    /// emphasising — the active carousel page, the just-tapped chat
+    /// link, or the single-pin tap target. Drives the breathing
+    /// scale animation on the matching annotation view. Cleared
+    /// when the bottom tile dismisses.
+    var currentSuggestionID: String?
+
     /// Debounce token for the city resolve. Each `regionDidChange` call
     /// cancels the previous one so we only fire the SDK request after
     /// the user stops panning for ~300ms.
     private var cityResolveTask: Task<Void, Never>?
+
+    /// Delayed second-phase of the Discover-all reveal (overview →
+    /// zoom-in on pins[0]). Held so a rapid re-tap of "Discover all"
+    /// can cancel the in-flight choreography before kicking off a
+    /// new one — prevents the camera from snapping to a stale pin.
+    private var discoverAllRevealTask: Task<Void, Never>?
 
     private let placeService: PlaceServiceProtocol
     private let userService: UserServiceProtocol
@@ -603,26 +637,88 @@ final class MapViewModel {
     /// Idempotent: re-tapping the same link (same name + same coord
     /// rounded to 5dp) doesn't drop a duplicate pin.
     @MainActor
-    func focusOnAISuggestion(name: String, category: String?, latitude: Double, longitude: Double) {
+    func focusOnAISuggestion(
+        name: String,
+        category: String?,
+        description: String? = nil,
+        hours: String? = nil,
+        price: String? = nil,
+        website: String? = nil,
+        phone: String? = nil,
+        latitude: Double,
+        longitude: Double
+    ) {
         // Stable id keyed off name + quantised coord so dedupe works
         // when the AI re-mentions the same venue with slightly noisy
         // coords from web search.
         let key = String(format: "%@@%.5f,%.5f", name.lowercased(), latitude, longitude)
         let id = key.data(using: .utf8)?.base64EncodedString() ?? key
+        // If a pin with this id already exists and the new call carries
+        // a description while the old one didn't, prefer the richer
+        // one. Cheap upsert without breaking idempotency.
+        if let existing = aiSuggestionPins.first(where: { $0.id == id }),
+           existing.description != nil {
+            // Already have the rich version — fall through to recenter
+            // logic without touching the array.
+        }
         let pin = SuggestedPin(
             id: id,
             name: name,
             category: category,
+            description: description,
+            hours: hours,
+            price: price,
+            website: website,
+            phone: phone,
             latitude: latitude,
             longitude: longitude
         )
 
+        // When the bottom carousel tile is on screen, its footprint hides
+        // the bottom ~270pt of the map. Centring the camera on the pin's
+        // coord parks it in the geometric centre of the *full* screen,
+        // which lands the pin BEHIND the tile. To keep the pin in a
+        // "logical place" (centre of the *visible* map area — between
+        // the top of the screen and the top of the tile), nudge the
+        // camera centre SOUTH by a fraction of the latitude span. The
+        // pin (rendered at its real lat) then appears that same fraction
+        // ABOVE the screen centre, i.e. mid-visible-area.
+        //
+        // The fraction (~0.18 of latitudeDelta) is tuned to:
+        //   • compact carousel page (~174pt) + 96pt bottom padding ≈ 270pt
+        //   • screen height ≈ 850pt
+        //   • pin needs to sit at (screenH - 270)/2 from top
+        //   • shift in pixels ≈ 135 → 135/850 ≈ 0.16, rounded to 0.18 for
+        //     a touch of headroom against the expanded tile state (300pt
+        //     page) and Dynamic Island devices.
+        let latSpan: Double = 0.008
+        let carouselUp = !discoverAllSuggestions.isEmpty
+        let centreLatShift: Double = carouselUp ? -(latSpan * 0.18) : 0
         withAnimation(SomedayAnimations.inTileNav) {
             region = MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-                span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+                center: CLLocationCoordinate2D(
+                    latitude: latitude + centreLatShift,
+                    longitude: longitude
+                ),
+                span: MKCoordinateSpan(latitudeDelta: latSpan, longitudeDelta: latSpan)
             )
-            if !aiSuggestionPins.contains(where: { $0.id == pin.id }) {
+            if let idx = aiSuggestionPins.firstIndex(where: { $0.id == pin.id }) {
+                // Upsert: prefer the version that carries the most
+                // metadata. We score each candidate by the number of
+                // non-nil optional fields and replace only when the
+                // incoming pin is richer. Keeps the array stable when
+                // the user re-taps a link the AI repeats verbatim,
+                // and upgrades it the moment a later turn ships more
+                // detail (e.g. hours/price arriving on a follow-up).
+                let existing = aiSuggestionPins[idx]
+                let score: (SuggestedPin) -> Int = { p in
+                    [p.description, p.hours, p.price, p.website, p.phone]
+                        .compactMap { $0 }.count
+                }
+                if score(pin) > score(existing) {
+                    aiSuggestionPins[idx] = pin
+                }
+            } else {
                 aiSuggestionPins.append(pin)
             }
             aiSuggestionHint = AISuggestionHint(
@@ -630,6 +726,12 @@ final class MapViewModel {
                 category: category,
                 coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
             )
+            // Whichever pin we just centred on is now the "active"
+            // one for the breathing pulse. Covers all entry points:
+            // chat link tap, single-pin map tap (via
+            // `beginDiscoverAll([pin])` → here), and carousel
+            // page swipe (via `onPageChange` → here).
+            currentSuggestionID = id
         }
         Haptics.tap()
 
@@ -693,8 +795,158 @@ final class MapViewModel {
     /// breadcrumb of suggestions it dropped.
     @MainActor
     func clearAISuggestionPins() {
+        discoverAllRevealTask?.cancel()
+        discoverAllRevealTask = nil
         withAnimation(SomedayAnimations.inTileNav) {
             aiSuggestionPins.removeAll()
+            discoverAllSuggestions.removeAll()
+            currentSuggestionID = nil
+        }
+    }
+
+    /// Open the bottom suggestion tile with one or more pins.
+    /// `pins.count == 1` → single-page card (pin tap on the map).
+    /// `pins.count > 1` → choreographed reveal: zoom out to fit all
+    /// pins so the user can see them pop onto the map, briefly hold
+    /// the wide view, then zoom in on `pins[0]` and surface the
+    /// swipeable carousel tile. Single-pin case skips the overview
+    /// step (no point zooming out to one dot).
+    @MainActor
+    func beginDiscoverAll(_ pins: [SuggestedPin]) {
+        guard !pins.isEmpty else { return }
+        Haptics.tap()
+        selectedPlace = nil
+
+        // Single-pin fast path: no overview phase, straight to focus
+        // + tile (matches the previous behaviour for map-pin taps).
+        if pins.count == 1 {
+            withAnimation(SomedayAnimations.inTileNav) {
+                discoverAllSuggestions = pins
+            }
+            focusOnAISuggestion(
+                name: pins[0].name,
+                category: pins[0].category,
+                description: pins[0].description,
+                hours: pins[0].hours,
+                price: pins[0].price,
+                website: pins[0].website,
+                phone: pins[0].phone,
+                latitude: pins[0].latitude,
+                longitude: pins[0].longitude
+            )
+            return
+        }
+
+        // Multi-pin choreography. Drop all pins onto the map first
+        // (upsert into `aiSuggestionPins`) so they animate in while
+        // the camera is wide. The carousel tile stays hidden during
+        // the overview hold — we don't want it racing the zoom.
+        upsertAISuggestionPins(pins)
+
+        // Compute an overview region that contains every pin with a
+        // generous edge pad so the tile doesn't end up covering the
+        // bottom pin. Floor at a sane minimum span for tightly-
+        // clustered pins (~few blocks apart).
+        let lats = pins.map(\.latitude)
+        let lons = pins.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else { return }
+        let centerLat = (minLat + maxLat) / 2
+        let centerLon = (minLon + maxLon) / 2
+        let spanLat = max((maxLat - minLat) * 1.8, 0.02)
+        let spanLon = max((maxLon - minLon) * 1.8, 0.02)
+
+        withAnimation(SomedayAnimations.inTileNav) {
+            region = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
+                span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+            )
+            // Clear breathing during the overview — no pin is
+            // "active" yet, just everyone equally on stage.
+            currentSuggestionID = nil
+        }
+
+        // Hold the wide view long enough for the pop-in to register,
+        // then zoom in on the first pin and surface the carousel.
+        // 1.1s ≈ camera ease (~0.6s) + a beat to let the user see
+        // the spread before we narrow in.
+        discoverAllRevealTask?.cancel()
+        discoverAllRevealTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.1))
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                withAnimation(SomedayAnimations.inTileNav) {
+                    self.discoverAllSuggestions = pins
+                }
+                self.focusOnAISuggestion(
+                    name: pins[0].name,
+                    category: pins[0].category,
+                    description: pins[0].description,
+                    hours: pins[0].hours,
+                    price: pins[0].price,
+                    website: pins[0].website,
+                    phone: pins[0].phone,
+                    latitude: pins[0].latitude,
+                    longitude: pins[0].longitude
+                )
+            }
+        }
+    }
+
+    /// Idempotent batch upsert used by the Discover-all overview
+    /// phase so we can drop every pin onto the map BEFORE running
+    /// the camera animation. Mirrors `focusOnAISuggestion`'s upsert
+    /// rule (richer metadata wins) but without touching the camera
+    /// or banner — those are owned by the caller.
+    @MainActor
+    private func upsertAISuggestionPins(_ pins: [SuggestedPin]) {
+        withAnimation(SomedayAnimations.inTileNav) {
+            for pin in pins {
+                if let idx = aiSuggestionPins.firstIndex(where: { $0.id == pin.id }) {
+                    let existing = aiSuggestionPins[idx]
+                    let score: (SuggestedPin) -> Int = { p in
+                        [p.description, p.hours, p.price, p.website, p.phone]
+                            .compactMap { $0 }.count
+                    }
+                    if score(pin) > score(existing) {
+                        aiSuggestionPins[idx] = pin
+                    }
+                } else {
+                    aiSuggestionPins.append(pin)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func endDiscoverAll() {
+        discoverAllRevealTask?.cancel()
+        discoverAllRevealTask = nil
+        withAnimation(SomedayAnimations.inTileNav) {
+            discoverAllSuggestions.removeAll()
+            currentSuggestionID = nil
+        }
+    }
+
+    /// Instant (no-animation) dismissal of the two bottom-anchored
+    /// context tiles — pin_tile (`selectedPlace`) and tile_bottom
+    /// (`discoverAllSuggestions`). Called by the chat-input focus
+    /// handler in MapHomeView so the tiles vanish on the next frame,
+    /// before the iOS keyboard rise animation runs. Wrapping this in
+    /// `withAnimation` would conflict with the keyboard slide — both
+    /// animate over ~250ms and the user perceives the tile drifting
+    /// upward instead of disappearing. Skipping the animation makes
+    /// it pop away cleanly.
+    @MainActor
+    func dismissBottomTilesForKeyboard() {
+        if selectedPlace != nil {
+            selectedPlace = nil
+        }
+        if !discoverAllSuggestions.isEmpty {
+            discoverAllRevealTask?.cancel()
+            discoverAllRevealTask = nil
+            discoverAllSuggestions.removeAll()
+            currentSuggestionID = nil
         }
     }
 
@@ -1138,6 +1390,107 @@ final class MapViewModel {
         customLists.first(where: { $0.placeIDs.contains(place.id) })
     }
 
+    /// All custom lists this place currently belongs to. Used by the
+    /// Lists overlay's "edit membership" mode to decide which tiles get
+    /// the highlighted border. Order matches `customLists` (user's own
+    /// stored order).
+    func listsContaining(placeID: String) -> [CustomList] {
+        customLists.filter { $0.placeIDs.contains(placeID) }
+    }
+
+    /// True iff the place currently belongs to the named list. O(n) over
+    /// the placeIDs of that one list — cheap; called per tile per render.
+    func placeIsInList(placeID: String, listName: String) -> Bool {
+        guard let list = customLists.first(where: { $0.name == listName }) else {
+            return false
+        }
+        return list.placeIDs.contains(placeID)
+    }
+
+    // MARK: - Membership editor
+
+    /// Enter membership-editor mode for the given pin. Dismisses the
+    /// pin_tile (so the lists tile owns the screen) and opens the lists
+    /// overlay. The view checks `membershipEditingPlace` to decide
+    /// whether to render the lists tile in editor mode.
+    @MainActor
+    func beginEditMembership(for place: Place) {
+        membershipEditingPlace = place
+        withAnimation(SomedayAnimations.tile) {
+            selectedPlace = nil
+            showOverlay(.lists)
+        }
+    }
+
+    /// Leave membership-editor mode. Re-opens the pin_tile for the same
+    /// pin so the user can see the updated list chip without having to
+    /// re-tap the map. Called when the lists overlay dismisses while in
+    /// editor mode.
+    @MainActor
+    func endEditMembership() {
+        guard let editing = membershipEditingPlace else { return }
+        membershipEditingPlace = nil
+        // Re-resolve the place from the live `places` array so a stale
+        // snapshot doesn't bring back e.g. an out-of-date category. Falls
+        // back to the captured value if it was somehow removed from the
+        // map while editing.
+        let refreshed = places.first(where: { $0.id == editing.id }) ?? editing
+        withAnimation(SomedayAnimations.tile) {
+            selectedPlace = refreshed
+        }
+    }
+
+    /// Toggle the membership of `membershipEditingPlace` in the named
+    /// list. If the pin is already in the list, remove it; otherwise add
+    /// it to the END of the list. Optimistic local mutation drives the
+    /// border + pin colour instantly; the Supabase write follows.
+    ///
+    /// Errors are logged but don't roll back — same policy as the rest
+    /// of the view model's mutation tools.
+    @MainActor
+    func toggleListMembership(listName: String) {
+        guard let place = membershipEditingPlace else { return }
+        guard let idx = customLists.firstIndex(where: { $0.name == listName }) else {
+            return
+        }
+        let listID = customLists[idx].id.uuidString
+        let placeID = place.id
+        let wasMember = customLists[idx].placeIDs.contains(placeID)
+
+        withAnimation(SomedayAnimations.tile) {
+            if wasMember {
+                customLists[idx].placeIDs.removeAll { $0 == placeID }
+            } else {
+                customLists[idx].placeIDs.append(placeID)
+            }
+        }
+        // Tap haptic on every toggle so the user feels the change land
+        // before the optimistic mutation animates in.
+        Haptics.tap()
+
+        // Persist in the background. `position` for adds = current
+        // tail (length minus 1 because we already appended).
+        let newPosition = customLists[idx].placeIDs.count - 1
+        Task {
+            do {
+                if wasMember {
+                    try await listService.removePlace(placeID: placeID, fromListID: listID)
+                } else {
+                    try await listService.addPlace(
+                        placeID: placeID,
+                        toListID: listID,
+                        position: newPosition
+                    )
+                }
+            } catch {
+                #if DEBUG
+                let verb = wasMember ? "removePlace" : "addPlace"
+                print("[MapViewModel] \(verb) persist failed for \(placeID) on \(listID): \(error)")
+                #endif
+            }
+        }
+    }
+
     /// What list name (if any) should colour this place's map pin?
     /// Wider than `listContaining` because it also surfaces the list a
     /// FRIEND owns — when the user is previewing a shared list, the
@@ -1302,22 +1655,47 @@ final class MapViewModel {
     @MainActor
     func deleteCustomList(name: String) async {
         guard let idx = customLists.firstIndex(where: { $0.name == name }) else { return }
-        let listID = customLists[idx].id.uuidString
-        // Snapshot the pin ids BEFORE the in-memory removal so we
-        // still know what to delete after `customLists` is mutated.
-        let pinIDsToDelete = customLists[idx].placeIDs
+        // Snapshot EVERYTHING we need to know about the list BEFORE we
+        // touch `customLists`. The old version read `customLists[idx]`
+        // inside a `removeAll(where:)` predicate that was simultaneously
+        // mutating the same array — `idx` could become a stale or
+        // out-of-bounds index mid-partition, and the subscript would
+        // either return the wrong row (silent bug) or trap (crash).
+        let listToRemove = customLists[idx]
+        let listID = listToRemove.id.uuidString
+        let listUUID = listToRemove.id
+        let pinIDsToDelete = listToRemove.placeIDs
         // Optimistic local removal: drop the list and every pin it
-        // contained in one animated pass.
+        // contained in one animated pass. Use the captured UUID so the
+        // predicate doesn't re-read the mutating array.
         withAnimation(SomedayAnimations.tile) {
-            customLists.removeAll { $0.id == customLists[idx].id }
+            customLists.removeAll { $0.id == listUUID }
             let toDelete = Set(pinIDsToDelete)
-            places.removeAll { toDelete.contains($0.id) }
+            if !toDelete.isEmpty {
+                places.removeAll { toDelete.contains($0.id) }
+            }
             // Clear selection if the open place card was one of the
             // deleted pins — otherwise the card would hang on an id
             // that no longer exists.
             if let sel = selectedPlace, toDelete.contains(sel.id) {
                 selectedPlace = nil
             }
+            // Same defensive cleanup for transient list-scoped state.
+            // A stale `previewedList` / `previewTargetList` / pending
+            // "add to list" flow pointing at the just-deleted list
+            // would otherwise keep its name alive in the UI and cause
+            // downstream lookups to silently return the wrong row.
+            if previewedList?.name == name {
+                previewedList = nil
+            }
+            if previewTargetList == name {
+                previewTargetList = nil
+            }
+            // Discover-all & AI suggestion pins that lived only inside
+            // this list don't get auto-pruned by `places.removeAll`
+            // above — they live in their own array — but their IDs
+            // never overlap with `pinIDsToDelete`, so there's nothing
+            // to clean here. (Documented for future reviewers.)
         }
         Haptics.warning()
         Task {

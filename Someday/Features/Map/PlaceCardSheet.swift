@@ -148,16 +148,25 @@ struct PlaceCardSheet: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                // Leave room for the bottom tab bar + feedback pill so the
-                // action buttons aren't covered. Tab bar ≈ 68pt above the
-                // safe-area bottom, then ~16pt margin and the feedback pill.
-                // Tightened from 130pt now that the hero is a 96pt square
-                // instead of a 180pt banner — keeps the card visually
-                // grounded without burning extra vertical real estate.
-                .padding(.bottom, 116)
+                // Small breathing room at the bottom of the card. We no
+                // longer extend behind the tab bar (the card now floats
+                // above it as a `tile_bottom`-style surface), so the old
+                // 116pt clearance is gone — 20pt is enough to keep the
+                // action buttons from kissing the rounded corner.
+                .padding(.bottom, 20)
             }
+            // Match the tile_bottom visual language: same corner radius,
+            // same primary-tinted hairline stroke. Background stays solid
+            // white because the card carries dense content (photo,
+            // sliders, dark text) that would lose contrast against the
+            // glass blur tile_bottom uses for its empty state.
             .background(.white)
-            .cornerRadius(20)
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
             .offset(y: max(dragOffset, 0))
             .gesture(
                 DragGesture()
@@ -170,8 +179,13 @@ struct PlaceCardSheet: View {
                         }
                     }
             )
+            // tile_bottom positioning: 16pt horizontal inset (matches
+            // TileTop / TileBottom in MapHomeView) and 96pt bottom
+            // padding so the card's bottom edge sits the standard gap
+            // above the floating capsule tab bar.
+            .padding(.horizontal, 16)
+            .padding(.bottom, 96)
         }
-        .ignoresSafeArea(edges: .bottom)
         .onAppear {
             if let review = place.review {
                 priceValue = review.price
@@ -210,27 +224,48 @@ struct PlaceCardSheet: View {
     }
 
     /// Hero photo at the top of the card. Uses the imported `imageURL`
-    /// when present; otherwise falls back to the brand gradient so cards
-    /// for manually-added places still look intentional.
+    /// when present (Instagram / TikTok / Maps imports carry their own
+    /// photo); otherwise drops to a category-keyed stock photo so mock
+    /// + manually-typed places still get a real image instead of the
+    /// flat brand gradient. The brand-gradient fallback only kicks in
+    /// if even the stock photo lookup fails (offline, etc.).
     @ViewBuilder
     private var heroImage: some View {
-        if let url = place.imageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .empty:
-                    LinearGradient(
-                        colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    )
-                default:
-                    fallbackGradient
-                }
+        AsyncImage(url: place.imageURL ?? Self.categoryFallbackImageURL(place.category)) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .empty:
+                // Translucent placeholder while the AsyncImage is
+                // mid-fetch. Keeps the card from popping in too
+                // aggressively when the photo finally lands.
+                LinearGradient(
+                    colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            default:
+                fallbackGradient
             }
-        } else {
-            fallbackGradient
         }
+    }
+
+    /// Curated Unsplash photo per category. Public CDN URLs, stable
+    /// photo IDs, so a tap on a `.food` pin always shows a restaurant
+    /// table, a `.coffee` pin always shows a latte, etc. We pin width
+    /// + crop so AsyncImage caches a small file (~25 kB) per category
+    /// instead of pulling a 2 MB original. Swap these for real Google
+    /// Places photos when the lookup is wired up.
+    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
+        let photoID: String
+        switch category {
+        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
+        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
+        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
+        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
+        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
+        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
+        }
+        return URL(string: "https://images.unsplash.com/\(photoID)?w=400&h=400&fit=crop&q=80")
     }
 
     private var fallbackGradient: some View {

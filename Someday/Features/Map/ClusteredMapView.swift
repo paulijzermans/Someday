@@ -113,6 +113,17 @@ struct ClusteredMapView: UIViewRepresentable {
     /// it (matches the Info.plist promise of "only when you tap").
     var showsUserLocation: Bool = false
 
+    /// IDs of the pins that should "breathe" — slowly scale up and
+    /// down on a repeat-forever ease. Set by MapHomeView from the VM:
+    /// the selected place card pin, and any AI-suggestion pin that
+    /// the bottom info tile is currently showing. Either may be nil
+    /// independently. Driving this via id rather than a separate
+    /// "selected" flag means the annotation's identity stays stable
+    /// across diff passes, and we can attach / remove the breath
+    /// animation cleanly in `updateUIView`.
+    var breathingPlaceID: String? = nil
+    var breathingSuggestionID: String? = nil
+
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
@@ -155,8 +166,70 @@ struct ClusteredMapView: UIViewRepresentable {
             mapView.showsUserLocation = showsUserLocation
         }
 
+        // Sync the breathing pulse — start it on whichever annotation
+        // view matches `breathingPlaceID` / `breathingSuggestionID`,
+        // stop it on every other annotation view. Idempotent: the
+        // helper checks for an existing animation before adding a new
+        // one, so running this on every updateUIView is cheap.
+        syncBreathing(on: mapView)
+
         if Self.significantlyDifferent(mapView.region, region) {
             mapView.setRegion(region, animated: true)
+        }
+    }
+
+    /// Walk every annotation view currently on screen and attach /
+    /// detach the breathing pulse animation to match the active
+    /// selection. Pin views are recycled via MapKit's reuse pool, so
+    /// we always re-evaluate rather than tracking which view the
+    /// animation is currently on — cheap, robust against scroll.
+    private func syncBreathing(on mapView: MKMapView) {
+        for ann in mapView.annotations {
+            let view = mapView.view(for: ann)
+            guard let view else { continue }
+            let shouldBreathe: Bool
+            if let pa = ann as? PlaceAnnotation {
+                shouldBreathe = pa.place.id == breathingPlaceID
+            } else if let sa = ann as? SuggestionAnnotation {
+                shouldBreathe = sa.suggestionID == breathingSuggestionID
+            } else {
+                shouldBreathe = false
+            }
+            if shouldBreathe {
+                ClusteredMapView.attachBreathingAnimation(to: view)
+            } else {
+                ClusteredMapView.removeBreathingAnimation(from: view)
+            }
+        }
+    }
+
+    /// Add the repeat-forever scale pulse to `view.layer` under the
+    /// key `breathe`. No-op when the animation is already attached so
+    /// we don't restart it on every updateUIView tick (the user would
+    /// see a stutter on each render).
+    static func attachBreathingAnimation(to view: MKAnnotationView) {
+        guard view.layer.animation(forKey: "breathe") == nil else { return }
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 1.0
+        scale.toValue = 1.20
+        scale.duration = 1.1
+        scale.autoreverses = true
+        scale.repeatCount = .infinity
+        scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // Anchor the scale at the bottom of the pin so the tip stays
+        // pinned to the coordinate while the bulb breathes. The
+        // default anchor (.5, .5) would lift the tip off the spot.
+        view.layer.anchorPoint = CGPoint(x: 0.5, y: 1.0)
+        view.layer.add(scale, forKey: "breathe")
+    }
+
+    static func removeBreathingAnimation(from view: MKAnnotationView) {
+        view.layer.removeAnimation(forKey: "breathe")
+        // Reset the anchor so non-selected pins render normally
+        // (their hit area assumes the default (.5, .5)). MapKit will
+        // re-position the view on the next layout pass.
+        if view.layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) {
+            view.layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         }
     }
 
@@ -505,6 +578,25 @@ struct SuggestedPin: Identifiable, Equatable, Hashable, Sendable {
     let id: String
     let name: String
     let category: String?
+    /// One- or two-sentence blurb the AI shipped with the suggestion.
+    /// Shown in the bottom info tile when the user taps the pin and in
+    /// the "Discover all" carousel. Nil when the suggest link didn't
+    /// carry a `description=` query item (older messages, or the model
+    /// being terse — in which case the tile falls back to category +
+    /// neighbourhood).
+    let description: String?
+    /// Opening hours blurb the AI shipped, free-form ("Tue–Sun, 09–17").
+    /// Surfaced in the expanded suggestion tile when present.
+    let hours: String?
+    /// Ticket / entry pricing blurb ("€22 · free under 18", "Free entry").
+    /// Same expand-only treatment as `hours`.
+    let price: String?
+    /// Official website URL the AI surfaced. Rendered as a tappable
+    /// link in the expanded tile when present and well-formed.
+    let website: String?
+    /// Phone number string (raw, including spaces / + prefix). Rendered
+    /// as a tappable tel: link in the expanded tile.
+    let phone: String?
     let latitude: Double
     let longitude: Double
 }

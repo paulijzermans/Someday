@@ -38,6 +38,18 @@ struct ListsGridView: View {
     /// (jiggle) mode — meaning they want to *reorder*, not merge. The
     /// parent forwards to `MapViewModel.reorderCustomList(named:beforeName:)`.
     var onReorderRequested: (_ source: String, _ beforeTarget: String) -> Void = { _, _ in }
+    /// Membership-editor mode driver. When non-nil, the grid is in
+    /// "toggle membership" mode for the carried place id:
+    ///   • Each own-list tile renders with a coloured border when
+    ///     `isMember(listName)` returns true.
+    ///   • Tapping an own-list tile fires `onToggle(listName)` instead
+    ///     of `onSelectList(listName)` — and DOES NOT dismiss the grid.
+    ///   • The header swaps to "In which lists?" so the new affordance
+    ///     reads clearly.
+    ///   • The "+ new list" tile and the friend-shared tiles stay
+    ///     un-bordered and un-tappable (membership in friends' lists
+    ///     isn't yours to flip).
+    var membershipMode: MembershipMode? = nil
     let onCreateList: () -> Void
     let onDismiss: () -> Void
     /// Edit (home-screen jiggle) mode. Long-pressing any tile flips
@@ -62,6 +74,26 @@ struct ListsGridView: View {
         GridItem(.flexible(), spacing: 14),
         GridItem(.flexible(), spacing: 14)
     ]
+
+    /// Carrier for the toggle-membership UI mode. See `membershipMode`
+    /// above for behaviour. Held as a value type so `Equatable`
+    /// re-renders are cheap.
+    struct MembershipMode: Equatable {
+        /// The pin whose list memberships are being edited. Captured
+        /// here only for debugging / display — the toggle callback is
+        /// what actually flips state.
+        let placeID: String
+        /// Pure predicate: does the named list currently contain the
+        /// editing pin? Drives the per-tile highlight border.
+        let isMember: (String) -> Bool
+        /// Toggle handler — called with the list name on every tap of
+        /// an own-list tile while in this mode. Idempotent.
+        let onToggle: (String) -> Void
+
+        static func == (lhs: MembershipMode, rhs: MembershipMode) -> Bool {
+            lhs.placeID == rhs.placeID
+        }
+    }
 
     private var sortedListNames: [String] {
         lists.keys.sorted()
@@ -107,7 +139,10 @@ struct ListsGridView: View {
 
     private var header: some View {
         HStack {
-            Text("Lists")
+            // Title swaps to a clear instruction when the grid is in
+            // membership-editor mode so the new tap behaviour (toggle
+            // membership instead of open list) reads as intentional.
+            Text(membershipMode != nil ? "In which lists?" : "Lists")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(SomedayColors.charcoal)
             Spacer()
@@ -220,6 +255,10 @@ struct ListsGridView: View {
     private func customListTile(custom: CustomList, index: Int) -> some View {
         let style = ListVisualStyle.style(for: custom.name)
         let isThisDragging = (draggingName == custom.name)
+        // Membership-editor highlights: only resolve `isMember` when the
+        // mode is actually on so we don't re-evaluate the closure for
+        // every tile on every unrelated render.
+        let isMember = membershipMode?.isMember(custom.name) ?? false
 
         ListTile(
             name: custom.name,
@@ -229,10 +268,19 @@ struct ListsGridView: View {
             isEditing: isEditing,
             wiggleSeed: index,
             onDeleteTap: { onDeleteRequested(custom.name) },
+            isSelected: isMember,
             action: {
                 // Tap is suppressed in edit mode — the × badge and the
                 // tile movement own the gesture surface there.
                 guard !isEditing else { return }
+                // Membership-editor mode: tap toggles list membership
+                // (in → remove, out → add) and DOES NOT dismiss the
+                // grid — the user can keep flipping lists until they
+                // close the overlay.
+                if let mode = membershipMode {
+                    mode.onToggle(custom.name)
+                    return
+                }
                 onSelectList(custom.name)
                 onDismiss()
             }
@@ -445,6 +493,11 @@ struct ListTile: View {
     /// Fired when the user taps the × badge while in edit mode. The
     /// parent typically forwards to its `onDeleteRequested` callback.
     var onDeleteTap: () -> Void = {}
+    /// Highlight outline driven by the Lists overlay's "edit membership"
+    /// mode. When true, the tile gets a 3pt list-colour border so the
+    /// user can see at a glance which lists the active pin already lives
+    /// in. Purely visual — taps still flow through `action`.
+    var isSelected: Bool = false
     let action: () -> Void
 
     /// Animation phase that toggles to drive `.rotationEffect`. Flipped
@@ -479,6 +532,18 @@ struct ListTile: View {
             // tile container itself and by the chat bubbles, so the
             // whole UI reads as one glass surface.
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            // Membership-edit highlight. When this tile represents a
+            // list the active pin already belongs to, draw a thick
+            // border in the list's own colour so the user can see at a
+            // glance which lists they're already in. Tap = toggle.
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(
+                        isSelected ? style.color : Color.clear,
+                        lineWidth: 3
+                    )
+                    .animation(.easeInOut(duration: 0.18), value: isSelected)
+            )
         }
         .buttonStyle(.plain)
         // ---- Home-screen jiggle + × badge ----

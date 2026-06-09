@@ -58,8 +58,18 @@ enum InlineToken: Identifiable, Equatable {
 enum ChatMessageParser {
     /// Splits raw model output into `InlineToken`s.
     static func parse(_ raw: String) -> [InlineToken] {
+        // 0. Strip Anthropic web_search citation markup.
+        //    The server-side web_search tool wraps quoted source text
+        //    in `<cite ...>...</cite>` (and occasionally bare
+        //    `<citation .../>`) tags. These are meant to be rendered
+        //    as inline citation chips by clients that understand them;
+        //    our flow parser doesn't, so without stripping them the
+        //    user sees raw `<cite index="0">Café Veneur</cite>` markup
+        //    where a place pin or plain word should be.
+        let stripped = stripCitationTags(raw)
+
         // 1. Auto-link bare URLs not already inside [..](..) markdown.
-        let linked = autolinkBareURLs(raw)
+        let linked = autolinkBareURLs(stripped)
 
         // 2. Scan for markdown links `[label](url)` and split the string
         //    into alternating literal / link chunks.
@@ -67,15 +77,18 @@ enum ChatMessageParser {
         let pattern = #"\[([^\]]+)\]\(([^)\s]+)\)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             // Parser broken → fall back to word-splitting the raw string.
-            return wordSplit(linked)
+            return wordSplit(boldToUppercase(linked))
         }
         let ns = linked as NSString
         var cursor = 0
         for match in regex.matches(in: linked, range: NSRange(location: 0, length: ns.length)) {
-            // Emit any literal text before this match as words.
+            // Emit any literal text before this match as words. Bold
+            // markdown (`**X**`) is translated to UPPERCASE here so
+            // the AI's emphasis reads as a CAPS pattern in chat —
+            // visually strong without needing a weighted Text run.
             if match.range.location > cursor {
                 let lit = ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
-                tokens.append(contentsOf: wordSplit(lit))
+                tokens.append(contentsOf: wordSplit(boldToUppercase(lit)))
             }
             let label = ns.substring(with: match.range(at: 1))
             let urlString = ns.substring(with: match.range(at: 2))
@@ -83,16 +96,89 @@ enum ChatMessageParser {
                 tokens.append(token)
             } else {
                 // Couldn't parse the URL — degrade gracefully to just the label words.
-                tokens.append(contentsOf: wordSplit(label))
+                tokens.append(contentsOf: wordSplit(boldToUppercase(label)))
             }
             cursor = match.range.location + match.range.length
         }
         // Trailing literal.
         if cursor < ns.length {
             let lit = ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
-            tokens.append(contentsOf: wordSplit(lit))
+            tokens.append(contentsOf: wordSplit(boldToUppercase(lit)))
         }
         return tokens
+    }
+
+    /// Replace every `**X**` span in the input with `X.uppercased()`,
+    /// stripping the asterisks. Treats `**` markers as opaque so any
+    /// inner characters survive (punctuation, accents, emoji). Single
+    /// `*` (italic) is left intact — the system prompt only asks for
+    /// bold, and we don't want to mangle stray asterisks in URLs or
+    /// punctuation.
+    private static func boldToUppercase(_ s: String) -> String {
+        guard s.contains("**") else { return s }
+        // Non-greedy match between two `**` pairs; `[^*]` content keeps
+        // the matcher from gobbling across multiple bold runs on one
+        // line. `.dotMatchesLineSeparators` is intentionally off — a
+        // bold run shouldn't bridge a paragraph break.
+        let pattern = #"\*\*([^*]+?)\*\*"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return s }
+        var out = s
+        let ns = out as NSString
+        let matches = regex.matches(in: out, range: NSRange(location: 0, length: ns.length))
+        // Walk matches in reverse so each replacement doesn't shift the
+        // ranges of the matches we haven't processed yet.
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 2,
+                  let fullRange = Range(match.range, in: out) else { continue }
+            let inner = (out as NSString).substring(with: match.range(at: 1))
+            out.replaceSubrange(fullRange, with: inner.uppercased())
+        }
+        return out
+    }
+
+    /// Remove Anthropic web_search citation markup from a raw message.
+    /// Keeps the INNER text of `<cite ...>…</cite>` pairs (it's the
+    /// quoted source snippet, usually a venue name we want to keep
+    /// visible) and drops empty `<citation />`-style self-closing tags.
+    /// Also tolerates partial / unclosed tags that can arrive mid-
+    /// stream — anything that looks like a `<cite…>` or `</cite>` tag
+    /// is collapsed to its inner text or removed.
+    private static func stripCitationTags(_ s: String) -> String {
+        guard s.contains("<cite") || s.contains("</cite") || s.contains("<citation") else { return s }
+        var out = s
+
+        // 1. Paired `<cite …>INNER</cite>` → `INNER`. Non-greedy on the
+        //    inner so adjacent citations don't collapse into each other.
+        if let regex = try? NSRegularExpression(
+            pattern: #"<cite\b[^>]*>([\s\S]*?)</cite>"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = out as NSString
+            let matches = regex.matches(in: out, range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                guard match.numberOfRanges >= 2,
+                      let full = Range(match.range, in: out) else { continue }
+                let inner = (out as NSString).substring(with: match.range(at: 1))
+                out.replaceSubrange(full, with: inner)
+            }
+        }
+
+        // 2. Drop any remaining stray `<cite …>`, `</cite>`, or
+        //    `<citation … />` tags — these are unpaired fragments
+        //    (mid-stream partials, malformed citations).
+        if let regex = try? NSRegularExpression(
+            pattern: #"</?(?:cite|citation)\b[^>]*/?>"#,
+            options: [.caseInsensitive]
+        ) {
+            let ns = out as NSString
+            let matches = regex.matches(in: out, range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                guard let r = Range(match.range, in: out) else { continue }
+                out.removeSubrange(r)
+            }
+        }
+
+        return out
     }
 
     /// Markdown-wrap any bare http(s) URL not already inside `[…](…)`.
@@ -572,14 +658,22 @@ struct SuggestionPinPillView: View {
                 openURL(url)
             }
         } label: {
-            HStack(spacing: 5) {
-                MiniPin(color: lime, glyph: "sparkles")
+            HStack(spacing: 4) {
+                // Inline pills use the same `mappin.circle.fill` SF
+                // Symbol the chat's intermediary step rows use —
+                // visually smaller than the teardrop `MiniPin`, so
+                // pin references no longer break chat line height
+                // / disrupt the flow. The pill colour still carries
+                // the "this is a suggestion" lime identity.
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(lime)
                 Text(name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(lime)
                     .lineLimit(1)
             }
-            .padding(.leading, 4)
+            .padding(.leading, 6)
             .padding(.trailing, 8)
             .padding(.vertical, 2)
             .background(Capsule().fill(lime.opacity(0.12)))
@@ -618,14 +712,21 @@ struct SavedPlacePinPillView: View {
                 openURL(url)
             }
         } label: {
-            HStack(spacing: 5) {
-                MiniPin(color: color)
+            HStack(spacing: 4) {
+                // Match the slimmer `mappin.circle.fill` glyph the
+                // suggestion pill uses — uniform look across both
+                // pill flavours, and keeps chat line height down.
+                // The list-tinted colour still carries the
+                // identity that mattered about the teardrop pin.
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(color)
                 Text(name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(color)
                     .lineLimit(1)
             }
-            .padding(.leading, 4)
+            .padding(.leading, 6)
             .padding(.trailing, 8)
             .padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.12)))

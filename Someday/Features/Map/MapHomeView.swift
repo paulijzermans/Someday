@@ -51,6 +51,25 @@ struct MapHomeView: View {
     /// Cleared as soon as the user sends a message or types — the
     /// tiles are a starting screen, not a permanent fixture.
     @State private var showWelcomeTiles: Bool = false
+    /// Index into `aiSuggestions` for the rotating placeholder. Drives
+    /// the 5-second cycle through "ask anything…" prompts in the chat
+    /// input, but ONLY when we're not in the + welcome state — pressing
+    /// + pins a static "Or drop URL / image here" hint instead, since
+    /// that flow is specifically about handing the AI a thing to save.
+    @State private var currentSuggestionIndex: Int = 0
+    /// Resizable height for the chat transcript. The thin grabber bar
+    /// at the top of `aiConversationPanel` drags this between
+    /// `chatPanelMinHeight` and `chatPanelMaxHeight`, snapping on
+    /// release. Lets the user pull the chat down to peek at the map
+    /// without dismissing the thread entirely.
+    @State private var chatPanelHeight: CGFloat = 320
+    /// Live drag offset while the grabber is being dragged — applied on
+    /// top of `chatPanelHeight` and committed (or snapped away) on
+    /// gesture end so the resize feels rubber-band responsive.
+    @State private var chatPanelDragOffset: CGFloat = 0
+    private let chatPanelMinHeight: CGFloat = 96
+    private let chatPanelMaxHeight: CGFloat = 480
+    private let chatPanelDefaultHeight: CGFloat = 320
     /// On-device speech recognition for the mic button in the AI bar.
     /// Singleton because only one mic session can be alive at a time
     /// on iOS — multiple owners would just clobber each other.
@@ -136,12 +155,23 @@ struct MapHomeView: View {
     var body: some View {
         ZStack {
             mapLayer
-            aiSuggestionHintLayer
+            // `aiSuggestionHintLayer` retired — the bottom suggestion
+            // tile (carousel) is the single source of context now, so
+            // the duplicate "AI suggested here" floating banner that
+            // used to land after a chat link tap was visual noise.
+            // Helper still on the VM in case we bring back a transient
+            // confirmation toast later.
             savedToastLayer
             searchLayer
             friendFilterBanner
             profileLayer
             placeCardLayer
+            // Carousel-style suggestion tile in the same bottom slot
+            // as the place card. Used for BOTH single-pin taps (one
+            // page) and the chat's Discover All CTA (multi-page +
+            // swipe-to-pan). Mutually exclusive with `selectedPlace`
+            // — only one floating tile occupies the bottom slot.
+            discoverAllCarouselLayer
             // Floating tiles. Their scrims absorb taps for tap-outside-
             // to-dismiss — that's why the tab bar + feedback pill render
             // AFTER these layers, on top, so tab-switching never gets
@@ -268,6 +298,55 @@ struct MapHomeView: View {
         // sheet here so the user lands directly on the import preview.
         .onChange(of: appState.pendingImportURL) { _, newValue in
             handlePendingImport(newValue)
+        }
+        // Safety net for membership-editor state: if the Lists overlay
+        // closes via any route that bypasses our explicit `onDismiss`
+        // (e.g., the user taps a different bottom-bar button which
+        // swaps the overlay), drop `membershipEditingPlace` so the next
+        // time Lists opens it isn't unexpectedly in editor mode. The
+        // happy path (× / tap-outside) has already cleared it via
+        // `endEditMembership()` before this fires, so the guard makes
+        // it a no-op there.
+        .onChange(of: vm.showLists) { _, isOpen in
+            if !isOpen && vm.membershipEditingPlace != nil {
+                vm.membershipEditingPlace = nil
+            }
+        }
+        // When the keyboard rises, evict any floating tile that would
+        // otherwise be shoved upward by the keyboard inset. The user
+        // explicitly asked: tile should disappear, not slide up — typing
+        // is the new context, the previous tile is stale once the user
+        // is composing a fresh question. Covers the place card and the
+        // Discover All carousel, the two tiles pinned to the bottom slot.
+        .onChange(of: chatInputFocused) { _, focused in
+            guard focused else { return }
+            // Two competing constraints we have to satisfy at once:
+            //
+            //   (1) Tile must be GONE before the iOS keyboard rise
+            //       completes (~250ms), otherwise the keyboard inset on
+            //       the parent ZStack drags the tile upward visibly.
+            //
+            //   (2) Focus must FULLY ESTABLISH before we mutate any
+            //       view-model state, otherwise SwiftUI's body re-render
+            //       (triggered by the mutation) recreates the TextField
+            //       and the half-applied focus is lost — the user sees
+            //       the chat panel open but no keyboard appears.
+            //
+            // The previous attempt did (1) synchronously inside this
+            // callback, which broke (2): tapping the field with a tile
+            // up swallowed the keyboard. The previous-previous attempt
+            // wrapped the mutation in `withAnimation`, which fixed (2)
+            // by deferring state apply to a transaction boundary but
+            // broke (1) by re-introducing the slide-up animation.
+            //
+            // Resolution: defer ONE runloop tick via Task. SwiftUI
+            // completes the focus cycle in the current tick; our state
+            // change applies on the next. ~16ms later the tile is gone,
+            // and that's still ~230ms before the keyboard finishes its
+            // rise — far too early for the user to perceive a push-up.
+            Task { @MainActor in
+                vm.dismissBottomTilesForKeyboard()
+            }
         }
         .onAppear { handlePendingImport(appState.pendingImportURL) }
         // Drag-to-merge confirmation. Phrasing matches the user's
@@ -404,6 +483,11 @@ struct MapHomeView: View {
             let raw = url.path.split(separator: "/").first.map(String.init)
                 ?? url.lastPathComponent
             guard !raw.isEmpty else { return .discarded }
+            // Heavy single beat — the user is committing to a pin from
+            // chat, which is the moment of "I want to go look at THIS."
+            // Stronger than the .tap() the pin-on-map tap uses so the
+            // chat-pin path feels like a deliberate, weighty selection.
+            Haptics.heavy()
             collapseChrome()
             return vm.focusOnPlaceLink(raw) ? .handled : .discarded
 
@@ -418,8 +502,55 @@ struct MapHomeView: View {
             else { return .discarded }
             let name = items.first(where: { $0.name == "name" })?.value ?? "Suggested place"
             let category = items.first(where: { $0.name == "category" })?.value
+            // Free-form metadata the AI can ship URL-encoded on the
+            // suggest link. All optional — the expanded tile renders
+            // whichever fields are present and graceful-fallbacks the
+            // missing ones.
+            let description = items.first(where: { $0.name == "description" })?.value
+            let hours = items.first(where: { $0.name == "hours" })?.value
+            let price = items.first(where: { $0.name == "price" })?.value
+            let website = items.first(where: { $0.name == "website" })?.value
+            let phone = items.first(where: { $0.name == "phone" })?.value
+            // Same heavy beat as the saved-place chat-pin tap above —
+            // the user is committing to a venue the AI proposed, and we
+            // want it to feel like a deliberate selection, not a
+            // glancing tap.
+            Haptics.heavy()
             collapseChrome()
-            vm.focusOnAISuggestion(name: name, category: category, latitude: lat, longitude: lon)
+            vm.focusOnAISuggestion(
+                name: name,
+                category: category,
+                description: description,
+                hours: hours,
+                price: price,
+                website: website,
+                phone: phone,
+                latitude: lat,
+                longitude: lon
+            )
+            // Also surface the bottom info tile — same affordance the
+            // user gets when they tap the pin on the map directly.
+            // We build the pin here (the upsert logic inside
+            // `focusOnAISuggestion` keyed off the same id ran first,
+            // so the array entry already exists; we just need a
+            // value to hand to the carousel tile). Single-element
+            // array → no swipe, no dot strip, full info card.
+            let key = String(format: "%@@%.5f,%.5f", name.lowercased(), lat, lon)
+            let id = key.data(using: .utf8)?.base64EncodedString() ?? key
+            let pin = vm.aiSuggestionPins.first(where: { $0.id == id })
+                ?? SuggestedPin(
+                    id: id,
+                    name: name,
+                    category: category,
+                    description: description,
+                    hours: hours,
+                    price: price,
+                    website: website,
+                    phone: phone,
+                    latitude: lat,
+                    longitude: lon
+                )
+            vm.beginDiscoverAll([pin])
             return .handled
 
         case "list":
@@ -432,6 +563,43 @@ struct MapHomeView: View {
             guard !decoded.isEmpty else { return .discarded }
             collapseChrome()
             return vm.focusOnList(named: decoded) ? .handled : .discarded
+
+        case "create-list":
+            // AI-proposed "Want me to start a [X] list?" confirm link.
+            // Tapping IS the "yes" — no second turn required. We fire
+            // a success haptic so the user feels the commit, then
+            // create the list immediately (idempotent: if a list by
+            // that name already exists, we focus it instead of
+            // duplicating). The new list shows up in the sidebar /
+            // list picker right away via the optimistic update path
+            // in `MapViewModel.createList`.
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            guard
+                let name = comps?.queryItems?
+                    .first(where: { $0.name == "name" })?.value?
+                    .removingPercentEncoding,
+                !name.trimmingCharacters(in: .whitespaces).isEmpty
+            else { return .discarded }
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+
+            // Dedupe against existing lists (case-insensitive) — if
+            // the AI re-offers the same list or the user re-taps the
+            // link, we focus the existing one rather than spawning a
+            // duplicate. Same matching rule as `focusOnList`.
+            if let existing = vm.customLists.first(where: {
+                $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+            }) {
+                Haptics.tap()
+                collapseChrome()
+                _ = vm.focusOnList(named: existing.name)
+                return .handled
+            }
+
+            // Fresh create. Strong "you committed it" haptic, then
+            // optimistic insert via the same path the manual UI uses.
+            Haptics.success()
+            vm.createList(name: trimmed, imageData: nil, placeIDs: [])
+            return .handled
 
         default:
             return .systemAction
@@ -532,22 +700,26 @@ struct MapHomeView: View {
             // friend-hash default.
             listNameFor: { place in vm.displayedListName(for: place) },
             // AI-proposed venues dropped via `someday://suggest?...`
-            // links in the chat. Distinct lime pins; tapping re-shows
-            // the transient hint banner with the venue name + a tap-
-            // to-dismiss affordance so the user can clear it.
+            // links in the chat. Distinct lime pins; tapping opens
+            // the carousel-style suggestion tile above the nav bar
+            // (one page for a single pin tap, multiple pages when
+            // entered via the chat's "Discover all" CTA).
             suggestions: vm.aiSuggestionPins,
             onSelectSuggestion: { pin in
-                vm.focusOnAISuggestion(
-                    name: pin.name,
-                    category: pin.category,
-                    latitude: pin.latitude,
-                    longitude: pin.longitude
-                )
+                vm.beginDiscoverAll([pin])
             },
             // Flipped on by `locateMe()` after the first granted fix
             // — MKMapView draws the standard pulsing blue dot and
             // keeps it live as the user moves.
-            showsUserLocation: showUserLocationDot
+            showsUserLocation: showUserLocationDot,
+            // Drive the breathing pulse from the VM selection. The
+            // place card pin breathes when `selectedPlace` is set;
+            // the AI-suggestion pin breathes when the bottom info
+            // tile is showing (single-pin tap OR the active page of
+            // the Discover All carousel). Either ID may be nil, both
+            // may be nil — in which case nothing breathes.
+            breathingPlaceID: vm.selectedPlace?.id,
+            breathingSuggestionID: vm.currentSuggestionID
         )
         .ignoresSafeArea()
         // Resolve the current city name whenever the viewport settles.
@@ -578,6 +750,7 @@ struct MapHomeView: View {
             }
             .transition(.scale(scale: 0.9).combined(with: .opacity))
             .zIndex(100)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -676,30 +849,23 @@ struct MapHomeView: View {
             // a standalone surface that shows three (eventually-real)
             // animation slots in a horizontally scrollable row.
             // `TileBottom` is its mirror, pinned to the navigation
-            // bar with the same gap. Both are shown together while
-            // the conversation is a blank slate (the user just opened
-            // chat via the + button); the moment a message lands,
-            // both retire so the transcript has the screen.
+            // bar with the same gap — kept as a structural slot for
+            // future content (place card / contextual actions slot
+            // in there). NOT rendered as part of the + welcome state
+            // any more: the welcome experience is just `TileTop`
+            // with a × to dismiss; the empty bottom companion was
+            // clutter.
             if showWelcomeTiles && chat.messages.isEmpty && vm.showSearch {
-                TileTop()
-                    .padding(.horizontal, 16)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                TileTop(onDismiss: {
+                    withAnimation(SomedayAnimations.tile) {
+                        showWelcomeTiles = false
+                    }
+                })
+                .padding(.horizontal, 16)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             Spacer()
-
-            // tile_bottom — empty same-size companion pinned to the
-            // bottom. Sits with its bottom edge against the floating
-            // capsule tab bar with the same inset the preview action
-            // bar uses (96pt above the screen bottom — capsule height
-            // + the 16pt safe-area gap), so the spacing reads as the
-            // navigation-bar gap, not as a random offset.
-            if showWelcomeTiles && chat.messages.isEmpty && vm.showSearch {
-                TileBottom()
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 96)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
         }
         // Hide the search affordance while any floating tile is up so the
         // overlay reads as the only thing on screen. Also disable hit-test
@@ -957,11 +1123,16 @@ struct MapHomeView: View {
         .animation(SomedayAnimations.tile, value: chat.messages.count)
         .animation(SomedayAnimations.tile, value: chat.isThinking)
         .transition(.scale(scale: 0.6, anchor: .topTrailing).combined(with: .opacity))
-        // Suggestion rotation deliberately disabled — the placeholder
-        // is now a static "Or drop URL / image here" string, so the
-        // 5-second cycle is no longer relevant. `aiSuggestions` +
-        // `suggestionTimer` are kept as dead state for now; remove
-        // them in the next pass.
+        // 5-second cycle through `aiSuggestions` — only matters when
+        // the placeholder is visible (empty field + not in + welcome
+        // state). We still tick when hidden so the rotation feels
+        // "in motion" the moment a returning user opens the bar; the
+        // crossfade animation only renders for the visible variant.
+        .onReceive(suggestionTimer) { _ in
+            withAnimation(.easeInOut(duration: 0.35)) {
+                currentSuggestionIndex = (currentSuggestionIndex + 1) % aiSuggestions.count
+            }
+        }
     }
 
     // NOTE: the live location-search dropdown was removed when this bar
@@ -998,16 +1169,28 @@ struct MapHomeView: View {
 
             ZStack(alignment: .leading) {
                 if vm.searchText.isEmpty {
-                    // Static placeholder — no rotation. Hints that the
-                    // bar accepts a URL or image as well as a typed
-                    // question (drop targets to follow). Keeping the
-                    // copy stable avoids the text flicker that the
-                    // rotating suggestions caused while typing was
-                    // about to begin.
-                    Text("Or drop URL / image here")
-                        .font(.system(size: 16))
-                        .foregroundColor(SomedayColors.grayMedium)
-                        .allowsHitTesting(false)
+                    // Two placeholder modes:
+                    //   • + welcome state → pinned "Or drop URL /
+                    //     image here" — that flow is specifically
+                    //     about handing the AI a thing to save, so a
+                    //     rotating hint would muddy the affordance.
+                    //   • everything else → 5-second rotation through
+                    //     `aiSuggestions` so a quiet bar still teaches
+                    //     the user what they can ask. Crossfade
+                    //     between values so the swap reads as a hint,
+                    //     not as a glitch.
+                    Group {
+                        if showWelcomeTiles {
+                            Text("Or drop URL / image here")
+                        } else {
+                            Text(aiSuggestions[currentSuggestionIndex])
+                                .id(currentSuggestionIndex)
+                                .transition(.opacity)
+                        }
+                    }
+                    .font(.system(size: 16))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .allowsHitTesting(false)
                 }
                 TextField("", text: $vm.searchText)
                     .font(.system(size: 16))
@@ -1114,13 +1297,59 @@ struct MapHomeView: View {
     // bar+transcript read as one expanding capsule.
 
     private var aiConversationPanel: some View {
-        scrollableTranscript
-            // Intercept taps on chat links so `someday://place/<id>` and
-            // `someday://suggest?…` URLs route to the map instead of the
-            // browser. Anything else falls through to the system handler.
-            .environment(\.openURL, OpenURLAction { url in
-                handleChatLinkTap(url)
-            })
+        VStack(spacing: 0) {
+            chatGrabber
+            scrollableTranscript
+        }
+        // Intercept taps on chat links so `someday://place/<id>` and
+        // `someday://suggest?…` URLs route to the map instead of the
+        // browser. Anything else falls through to the system handler.
+        .environment(\.openURL, OpenURLAction { url in
+            handleChatLinkTap(url)
+        })
+    }
+
+    /// Thin pill-shaped grabber bar sitting at the very top of the
+    /// transcript. Dragging it resizes `chatPanelHeight` so the user
+    /// can pull the chat down to peek at the map (or push it up to
+    /// read more history) without dismissing the thread. Snaps to
+    /// min / default / max on release for a sheet-like feel.
+    private var chatGrabber: some View {
+        // The visual grabber is small but the touch target is the
+        // full row so it's easy to grab on a phone.
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(SomedayColors.grayMedium.opacity(0.45))
+                .frame(width: 38, height: 4)
+                .padding(.top, 6)
+                .padding(.bottom, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    // Dragging DOWN should SHRINK the panel (the bar is
+                    // anchored at the bottom of the screen and grows
+                    // upward), so subtract the y translation from the
+                    // committed height.
+                    chatPanelDragOffset = -value.translation.height
+                }
+                .onEnded { value in
+                    let proposed = chatPanelHeight + (-value.translation.height)
+                    // Snap to the nearest of min / default / max so the
+                    // resize lands at predictable, ergonomic heights.
+                    let snaps: [CGFloat] = [chatPanelMinHeight, chatPanelDefaultHeight, chatPanelMaxHeight]
+                    let snapped = snaps.min(by: { abs($0 - proposed) < abs($1 - proposed) }) ?? chatPanelDefaultHeight
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        chatPanelHeight = snapped
+                        chatPanelDragOffset = 0
+                    }
+                    Haptics.tap()
+                }
+        )
+        .accessibilityLabel("Resize chat panel")
+        .accessibilityHint("Drag up or down to resize the chat")
     }
 
     @ViewBuilder
@@ -1147,6 +1376,15 @@ struct MapHomeView: View {
                             vm: vm,
                             onCheckTonightForAttachment: { place in
                                 Task { await vm.checkTonight(for: place) }
+                            },
+                            // Fires when the user taps the "Discover all"
+                            // CTA at the bottom of a bubble that linked
+                            // to 2+ suggestions. Collapses the chat
+                            // chrome so the carousel + map are the focus,
+                            // then opens the carousel above the nav bar.
+                            onDiscoverAll: { pins in
+                                collapseChrome()
+                                vm.beginDiscoverAll(pins)
                             }
                         )
                         .id(msg.id)
@@ -1180,7 +1418,13 @@ struct MapHomeView: View {
             }
         }
         .scrollDismissesKeyboard(.interactively)
-        .frame(maxHeight: 320)
+        // Height is driven by the grabber bar above: a committed
+        // value (`chatPanelHeight`) plus a live drag offset, clamped
+        // to the min/max so over-drags rubber-band rather than push
+        // the bar off-screen.
+        .frame(height: max(chatPanelMinHeight,
+                           min(chatPanelMaxHeight,
+                               chatPanelHeight + chatPanelDragOffset)))
     }
 
     // The bubble view is extracted to `ChatBubbleView` (below) so each
@@ -1531,6 +1775,7 @@ struct MapHomeView: View {
             }
             .transition(.opacity)
             .zIndex(20)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1598,6 +1843,7 @@ struct MapHomeView: View {
                 }
             )
             .zIndex(70)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1622,6 +1868,7 @@ struct MapHomeView: View {
                 }
             )
             .zIndex(80)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1638,6 +1885,7 @@ struct MapHomeView: View {
                 }
             )
             .zIndex(60)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1681,6 +1929,7 @@ struct MapHomeView: View {
                 }
             )
             .zIndex(50)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1721,6 +1970,7 @@ struct MapHomeView: View {
             // on the next open without a manual pull-to-refresh.
             .onAppear { vm.refreshIncomingFriendRequests() }
             .zIndex(50)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1774,6 +2024,22 @@ struct MapHomeView: View {
                     // shuffle (no alert) — same UX as iPhone Home Screen.
                     vm.reorderCustomList(named: source, beforeName: target)
                 },
+                // Membership-editor mode — fed from the pin_tile's
+                // list-membership button (see `placeCardLayer`'s
+                // `onAddToListTap`). When non-nil, the grid renders
+                // bordered tiles for the pin's current lists and routes
+                // taps to toggle membership instead of opening the list.
+                membershipMode: vm.membershipEditingPlace.map { place in
+                    ListsGridView.MembershipMode(
+                        placeID: place.id,
+                        isMember: { listName in
+                            vm.placeIsInList(placeID: place.id, listName: listName)
+                        },
+                        onToggle: { listName in
+                            vm.toggleListMembership(listName: listName)
+                        }
+                    )
+                },
                 onCreateList: {
                     // Single state write switches `presentedOverlay`
                     // from .lists → .createList atomically, so SwiftUI
@@ -1788,12 +2054,21 @@ struct MapHomeView: View {
                     // next time the user opens Lists it's not in picker
                     // mode by accident.
                     vm.cancelAddPendingPlaces()
+                    // If the grid was in membership-editor mode,
+                    // dismissing it should restore the pin_tile so the
+                    // user sees the updated list chip without having to
+                    // re-tap the map. Routed through `endEditMembership`
+                    // which owns the state cleanup + re-selection.
+                    if vm.membershipEditingPlace != nil {
+                        vm.endEditMembership()
+                    }
                     withAnimation(SomedayAnimations.tile) {
                         vm.showLists = false
                     }
                 }
             )
             .zIndex(50)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1824,6 +2099,7 @@ struct MapHomeView: View {
                 }
             )
             .zIndex(55)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 
@@ -1855,6 +2131,13 @@ struct MapHomeView: View {
     }
 
     // MARK: - Place Card
+    //
+    // Pin-tap surface. Used to slide up from the very bottom of the
+    // screen edge-to-edge; now anchors as a `tile_bottom`-style
+    // floating card — 16pt horizontal inset, 96pt above the floating
+    // capsule tab bar, matching corner radius + stroke as the chat
+    // welcome tiles. Tap outside the card (the transparent spacer
+    // above it) dismisses; drag-down still works inside the card too.
 
     @ViewBuilder
     private var placeCardLayer: some View {
@@ -1912,15 +2195,65 @@ struct MapHomeView: View {
                     Task { await vm.checkTonight(for: place) }
                 },
                 onAddToListTap: {
-                    // Same plumbing the summary tile's "Add" button uses
-                    // — stash the place and let the Lists picker commit
-                    // via `addPendingPlaces(to:)`. Card dismisses inside
-                    // `beginAddImportedPlacesToList` so the picker has
-                    // the screen to itself.
-                    vm.beginAddImportedPlacesToList([place])
+                    // Enter membership-editor mode: open the Lists
+                    // overlay with each list the pin is in highlighted
+                    // by a coloured border, and each tap toggles
+                    // membership (in → remove, out → add). Multi-list
+                    // membership is allowed. The pin_tile is dismissed
+                    // here and restored on overlay dismiss via
+                    // `vm.endEditMembership()` so the user sees the
+                    // updated chip without re-tapping the pin.
+                    vm.beginEditMembership(for: place)
                 }
             )
             .transition(.move(edge: .bottom).combined(with: .opacity))
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+        }
+    }
+
+    // MARK: - Discover All Carousel
+    //
+    // Horizontally-paging tile pinned above the nav bar. Each page
+    // shows one AI suggestion's name + description; swiping pages
+    // moves the map camera to that pin so the user can browse a
+    // batch of recommendations spatially. Also drives the
+    // single-pin-tap path (pins.count == 1) — same chrome, no dot
+    // strip, no swipe — so the entire AI-suggestion family has one
+    // visual identity.
+
+    @ViewBuilder
+    private var discoverAllCarouselLayer: some View {
+        if !vm.discoverAllSuggestions.isEmpty {
+            VStack {
+                Spacer()
+                DiscoverAllCarouselTile(
+                    pins: vm.discoverAllSuggestions,
+                    onPageChange: { pin in
+                        // Recenter the map on the new page's pin. We
+                        // call `focusOnAISuggestion` so the suggestion
+                        // pin lifecycle stays in one place (dedupe,
+                        // hint banner, etc.). All metadata fields ride
+                        // through so re-tapping a pin or revisiting a
+                        // page never downgrades the cached info.
+                        vm.focusOnAISuggestion(
+                            name: pin.name,
+                            category: pin.category,
+                            description: pin.description,
+                            hours: pin.hours,
+                            price: pin.price,
+                            website: pin.website,
+                            phone: pin.phone,
+                            latitude: pin.latitude,
+                            longitude: pin.longitude
+                        )
+                    },
+                    onDismiss: { vm.endDiscoverAll() }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 96)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 }
@@ -1954,6 +2287,10 @@ private struct ChatBubbleView: View {
     /// wants the tonight check to spin up. Parent does the work; the
     /// bubble just signals.
     let onCheckTonightForAttachment: (Place) -> Void
+    /// Fires when the user taps the "Discover all" CTA underneath a
+    /// reply that mentioned 2+ places. Receives the parsed
+    /// `SuggestedPin`s in the order they appeared in the message.
+    let onDiscoverAll: ([SuggestedPin]) -> Void
 
     @State private var stepsExpanded: Bool
 
@@ -1961,16 +2298,80 @@ private struct ChatBubbleView: View {
         msg: ChatMessage,
         isStreaming: Bool,
         vm: MapViewModel,
-        onCheckTonightForAttachment: @escaping (Place) -> Void
+        onCheckTonightForAttachment: @escaping (Place) -> Void,
+        onDiscoverAll: @escaping ([SuggestedPin]) -> Void
     ) {
         self.msg = msg
         self.isStreaming = isStreaming
         self.vm = vm
         self.onCheckTonightForAttachment = onCheckTonightForAttachment
-        // Initial render: expanded while live, collapsed for old
-        // messages scrolled back into view. `.onChange(of: isStreaming)`
-        // below keeps the state honest after the stream ends.
-        _stepsExpanded = State(initialValue: isStreaming)
+        self.onDiscoverAll = onDiscoverAll
+        // Initial render is ALWAYS collapsed. While the stream is
+        // live the bubble shows only the current step as a single
+        // tappable row (expand on tap); once done it folds into a
+        // "Show N steps" disclosure. Replaces the old behaviour
+        // where streaming bubbles fanned out the full step list,
+        // which crowded the conversation.
+        _stepsExpanded = State(initialValue: false)
+    }
+
+    /// Parsed `someday://suggest?...` links inside this message's body,
+    /// in the order they appeared. Drives the **Discover all** CTA —
+    /// rendered only when the message lists 2+ suggestions, since one
+    /// suggestion is already directly tappable via its own pin link.
+    private var parsedSuggestions: [SuggestedPin] {
+        ChatBubbleView.extractSuggestions(from: msg.content)
+    }
+
+    static func extractSuggestions(from text: String) -> [SuggestedPin] {
+        // Scan for `someday://suggest?...` substrings. We keep the
+        // parser deliberately loose: any whitespace or markdown
+        // delimiter ends the URL. URLComponents handles the rest.
+        var result: [SuggestedPin] = []
+        var seen = Set<String>()
+        let scanner = Scanner(string: text)
+        scanner.charactersToBeSkipped = nil
+        while !scanner.isAtEnd {
+            _ = scanner.scanUpToString("someday://suggest?")
+            guard !scanner.isAtEnd else { break }
+            // Read the URL up to the next whitespace / closing
+            // bracket / quote — markdown often wraps links in
+            // `[label](url)`, so `)` is a hard terminator too.
+            let stop = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ")]\""))
+            guard let raw = scanner.scanUpToCharacters(from: stop) else { break }
+            guard let url = URL(string: raw),
+                  let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let items = comps.queryItems,
+                  let latStr = items.first(where: { $0.name == "lat" })?.value,
+                  let lonStr = items.first(where: { $0.name == "lon" })?.value,
+                  let lat = Double(latStr),
+                  let lon = Double(lonStr)
+            else { continue }
+            let name = items.first(where: { $0.name == "name" })?.value ?? "Suggested place"
+            let category = items.first(where: { $0.name == "category" })?.value
+            let description = items.first(where: { $0.name == "description" })?.value
+            let hours = items.first(where: { $0.name == "hours" })?.value
+            let price = items.first(where: { $0.name == "price" })?.value
+            let website = items.first(where: { $0.name == "website" })?.value
+            let phone = items.first(where: { $0.name == "phone" })?.value
+            let key = String(format: "%@@%.5f,%.5f", name.lowercased(), lat, lon)
+            let id = key.data(using: .utf8)?.base64EncodedString() ?? key
+            guard !seen.contains(id) else { continue }
+            seen.insert(id)
+            result.append(SuggestedPin(
+                id: id,
+                name: name,
+                category: category,
+                description: description,
+                hours: hours,
+                price: price,
+                website: website,
+                phone: phone,
+                latitude: lat,
+                longitude: lon
+            ))
+        }
+        return result
     }
 
     var body: some View {
@@ -1985,13 +2386,12 @@ private struct ChatBubbleView: View {
         // exactly one fire per new step.
         .sensoryFeedback(.impact(weight: .light), trigger: msg.steps.count)
         .onChange(of: isStreaming) { _, nowStreaming in
-            // When the stream ends, fold the steps away so the bubble
-            // shrinks to just the answer. Auto-open again if a fresh
-            // stream lands on this bubble (rare).
+            // Always collapse when the stream transitions in either
+            // direction. The user can still tap the current-step row
+            // (while live) or the "Show N steps" disclosure (after)
+            // to peek at the trail; default is compact.
             if !nowStreaming {
                 withAnimation(.easeInOut(duration: 0.25)) { stepsExpanded = false }
-            } else {
-                withAnimation(.easeInOut(duration: 0.25)) { stepsExpanded = true }
             }
         }
     }
@@ -2000,46 +2400,72 @@ private struct ChatBubbleView: View {
     private var bubbleContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             // ---- Steps area --------------------------------------
+            //
+            // Two compact modes:
+            //   • Streaming → show ONLY the current (most recent)
+            //     step as a single tight row. Earlier steps fold into
+            //     the count silently; the user sees a live "Reading
+            //     list X" / "Searching the web" status line and
+            //     nothing else above the eventual reply.
+            //   • Stream done → collapsed by default, behind a
+            //     "Show N steps" disclosure. Tapping expands the full
+            //     compact list; tapping again hides it. Most replies
+            //     don't need the trail at all so the bubble stays
+            //     visually clean.
             if !msg.steps.isEmpty {
-                if stepsExpanded || isStreaming {
-                    VStack(alignment: .leading, spacing: 4) {
+                if stepsExpanded {
+                    VStack(alignment: .leading, spacing: 2) {
                         ForEach(msg.steps) { step in
                             ChatStepRow(step: step)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
-                        // Disclosure footer (only when stream is done —
-                        // while streaming, no point showing a collapse).
+                        // Hide-steps affordance (only available after
+                        // the stream finishes — while live, the user
+                        // shouldn't be able to collapse the activity).
                         if !isStreaming {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.25)) {
                                     stepsExpanded = false
                                 }
                             } label: {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 3) {
                                     Image(systemName: "chevron.up")
-                                        .font(.system(size: 9, weight: .bold))
-                                    Text("Hide steps")
-                                        .font(.system(size: 11))
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text("Hide")
+                                        .font(.system(size: 10))
                                 }
                                 .foregroundColor(SomedayColors.grayMedium)
                             }
                             .buttonStyle(.plain)
-                            .padding(.top, 2)
+                            .padding(.top, 1)
                         }
                     }
                     .animation(.easeInOut(duration: 0.2), value: msg.steps)
+                } else if isStreaming, let latest = msg.steps.last {
+                    // Live mode, collapsed → just the current step,
+                    // tappable to expand into the full list.
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            stepsExpanded = true
+                        }
+                    } label: {
+                        ChatStepRow(step: latest)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                    .id(latest.id)
                 } else {
-                    // Collapsed disclosure: tap to re-expand.
+                    // Post-stream, collapsed → "Show N steps" disclosure.
                     Button {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             stepsExpanded = true
                         }
                     } label: {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 8, weight: .bold))
                             Text("Show \(msg.steps.count) step\(msg.steps.count == 1 ? "" : "s")")
-                                .font(.system(size: 11))
+                                .font(.system(size: 10))
                         }
                         .foregroundColor(SomedayColors.grayMedium)
                     }
@@ -2063,6 +2489,36 @@ private struct ChatBubbleView: View {
                     raw: msg.content,
                     textColor: msg.role == .user ? .white : SomedayColors.charcoal
                 )
+            }
+
+            // ---- Discover all CTA -------------------------------
+            // Shown when an assistant reply mentions 2+ suggested
+            // venues. Tapping opens the carousel tile above the
+            // navigation bar; swiping the carousel pans the map to
+            // each pin in turn. We only show it post-stream so the
+            // bubble doesn't render a CTA against a partial set.
+            if msg.role == .assistant, !isStreaming {
+                let pins = parsedSuggestions
+                if pins.count >= 2 {
+                    Button {
+                        Haptics.tap()
+                        onDiscoverAll(pins)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "rectangle.stack.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("Discover all (\(pins.count))")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(SomedayColors.green)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(SomedayColors.lime.opacity(0.22), in: Capsule())
+                        .overlay(Capsule().stroke(SomedayColors.green.opacity(0.4), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
             }
 
             // ---- Availability attachment ------------------------
@@ -2105,43 +2561,51 @@ private struct ChatBubbleView: View {
 }
 
 /// One step row: SF Symbol + label + (spinner | checkmark). Lime while
-/// in-progress, fades to grey on done.
+/// in-progress, fades to grey on done. Compact — sized to read as a
+/// status footnote, not a primary UI element. Truncates the label so
+/// long tool calls ("Reading list Some Very Long Name") never wrap to
+/// a second line; the user can still tap to expand the full trail
+/// when the disclosure is collapsed.
 private struct ChatStepRow: View {
     let step: ChatStep
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: step.icon)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(step.done ? SomedayColors.grayMedium : SomedayColors.lime)
-                    .frame(width: 14, alignment: .center)
+                    .frame(width: 11, alignment: .center)
                 Text(step.label)
-                    .font(.system(size: 12))
-                    .foregroundColor(SomedayColors.charcoal.opacity(step.done ? 0.55 : 0.9))
-                    .lineLimit(2)
+                    .font(.system(size: 11))
+                    .foregroundColor(SomedayColors.charcoal.opacity(step.done ? 0.55 : 0.85))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 4)
                 if step.done {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(SomedayColors.grayMedium)
                         .transition(.opacity.combined(with: .scale))
                 } else {
                     ProgressView()
                         .progressViewStyle(.circular)
-                        .scaleEffect(0.55)
+                        .scaleEffect(0.45)
                         .tint(SomedayColors.lime)
-                        .frame(width: 14, height: 14)
+                        .frame(width: 11, height: 11)
                 }
             }
 
-            // Stacked chips — only present on the upfront "Searching your
-            // lists" / "Searching friends' lists" steps. Icon discriminates
-            // the rendering: list pills (colored from ListVisualStyle) vs
-            // friend chips (initials avatar + name).
+            // `chips` is now dead in practice — we used to populate it
+            // for the upfront "Searching your lists" / "friends'
+            // lists" preview steps, but those were removed because
+            // they fired on every prompt regardless of whether the
+            // model actually planned to look up lists or friends.
+            // Keeping the renderer here in case we wire chips into a
+            // future step type that genuinely warrants them.
             if !step.chips.isEmpty {
                 ChatStepChipsView(icon: step.icon, names: step.chips, dim: step.done)
-                    .padding(.leading, 22) // align with the label
+                    .padding(.leading, 17)
             }
         }
     }
@@ -2149,24 +2613,86 @@ private struct ChatStepRow: View {
 
 /// Renders the stacked preview chips beneath a step's label. Picks the
 /// chip style based on the step's icon — list-style pills (colored
-/// swatch + name) for the "Searching your lists" step, friend-style
-/// chips (initials circle + name) for the friends step. Hidden when
-/// `names` is empty.
+/// swatch + name) for the "Searching your lists" step, OR a compact
+/// overlapping avatar stack (initials only, no names) for the friends
+/// step. The friends path used to render full per-friend chips with
+/// the name spelled out next to each avatar; that ate too much
+/// vertical space in the bubble for what's essentially a "we're
+/// looking through their lists" footnote, so it's been collapsed to
+/// the avatar-stack idiom seen in the friends-visited chip on the
+/// place card.
 private struct ChatStepChipsView: View {
     let icon: String
     let names: [String]
     let dim: Bool
 
     var body: some View {
-        InlineFlowLayout(hSpacing: 4, vSpacing: 4) {
-            ForEach(names, id: \.self) { name in
-                if icon == "person.2.fill" {
-                    FriendChip(name: name, dim: dim)
-                } else {
+        if icon == "person.2.fill" {
+            FriendAvatarStack(names: names, dim: dim)
+        } else {
+            InlineFlowLayout(hSpacing: 4, vSpacing: 4) {
+                ForEach(names, id: \.self) { name in
                     ListChip(name: name, dim: dim)
                 }
             }
         }
+    }
+}
+
+/// Compact horizontal stack of friend initials, each in a small
+/// rounded-square avatar that overlaps the next by half its width —
+/// matches the visited-friends chip family. Used under the
+/// "Searching friends' lists" step instead of the older row of full
+/// chips. Tap target lives on the surrounding row; the stack itself
+/// is presentational.
+private struct FriendAvatarStack: View {
+    let names: [String]
+    let dim: Bool
+
+    /// Side length of each square avatar. Small enough that ~5 fit
+    /// in the bubble width even on smaller phones; big enough that
+    /// 1-letter initials read at a glance.
+    private let avatarSize: CGFloat = 18
+
+    var body: some View {
+        // Negative spacing pulls each avatar so it overlaps the one
+        // before by ~50%. Reversed z-order so the FIRST friend lands
+        // on top — the same convention the visited-friends chip uses.
+        HStack(spacing: -avatarSize * 0.45) {
+            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
+                AvatarSquare(name: name, size: avatarSize, dim: dim)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: true)
+    }
+}
+
+/// One avatar inside `FriendAvatarStack`: rounded-square chip with
+/// the friend's initials in white on the primary tint, hairline
+/// white border so overlapping squares stay visually distinct.
+private struct AvatarSquare: View {
+    let name: String
+    let size: CGFloat
+    let dim: Bool
+
+    private var initial: String {
+        name.split(separator: " ").compactMap { $0.first }.prefix(2).map(String.init).joined().uppercased()
+    }
+
+    var body: some View {
+        let tint = dim ? SomedayColors.primary.opacity(0.55) : SomedayColors.primary
+        RoundedRectangle(cornerRadius: 4)
+            .fill(tint)
+            .frame(width: size, height: size)
+            .overlay(
+                Text(initial.isEmpty ? "?" : initial)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(.white, lineWidth: 1.2)
+            )
     }
 }
 
@@ -2193,36 +2719,6 @@ private struct ListChip: View {
         .padding(.vertical, 2)
         .background(Capsule().fill(color.opacity(0.12)))
         .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 0.5))
-    }
-}
-
-/// Compact friend chip — initials in a small primary circle + name.
-/// Used under the "Searching friends' lists" step.
-private struct FriendChip: View {
-    let name: String
-    let dim: Bool
-
-    private var initial: String {
-        name.split(separator: " ").compactMap { $0.first }.prefix(2).map(String.init).joined().uppercased()
-    }
-
-    var body: some View {
-        let tint = dim ? SomedayColors.primary.opacity(0.5) : SomedayColors.primary
-        HStack(spacing: 4) {
-            Text(initial.isEmpty ? "?" : initial)
-                .font(.system(size: 7, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 14, height: 14)
-                .background(Circle().fill(tint))
-            Text(name)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(SomedayColors.charcoal.opacity(dim ? 0.55 : 0.9))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(tint.opacity(0.10)))
-        .overlay(Capsule().stroke(tint.opacity(0.25), lineWidth: 0.5))
     }
 }
 
@@ -2262,6 +2758,10 @@ private enum ChatTileMetrics {
 }
 
 private struct TileTop: View {
+    /// Fired when the user taps the × in the top-right corner. Parent
+    /// flips `showWelcomeTiles` off so the tile retires; the chat bar
+    /// + input stay open so they can start typing.
+    let onDismiss: () -> Void
     /// Three placeholder animation slots. Real animations plug in via
     /// `WelcomeAnimationSlot`'s body later; the surrounding layout
     /// (scroller + dots) doesn't need to change.
@@ -2330,6 +2830,23 @@ private struct TileTop: View {
             RoundedRectangle(cornerRadius: ChatTileMetrics.cornerRadius)
                 .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
         )
+        // Top-right × — same affordance every floating tile elsewhere
+        // in the app uses for "make this go away" (compare the
+        // AI-suggestion pin chip + import-summary card). Sits inside
+        // the rounded corner so it doesn't clip; backed by a small
+        // glass circle so it reads against any balloon underneath.
+        .overlay(alignment: .topTrailing) {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal.opacity(0.7))
+                    .frame(width: 24, height: 24)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1))
+            }
+            .padding(8)
+            .accessibilityLabel("Dismiss welcome tile")
+        }
     }
 }
 
@@ -2366,34 +2883,300 @@ private struct TileBottom: View {
     }
 }
 
-/// One slot inside `TileTop`. Now compact (no caption, no
-/// title) so the tile stays ~half its former height. Placeholder
-/// content: the SF Symbol `airballoon.fill` scaling on a repeat-
-/// forever ease. Swap for a Lottie loop later — the slot's outer
-/// frame is fixed via the parent's `.frame(width:height:)`, so any
-/// replacement renders cleanly inside that box.
-private struct WelcomeAnimationSlot: View {
-    let phaseDelay: Double
-    @State private var scaledUp = false
+// =============================================================================
+// DiscoverAllCarouselTile — suggestion browse tile (1..N pins)
+// =============================================================================
+//
+// Same anchor + chrome as `SuggestionInfoTile`, but the body is a
+// horizontally-paging scroller — one page per suggestion. Page
+// changes call `onPageChange(pin)` so the map camera follows the
+// user's swipe. Dot strip beneath the pages mirrors the active
+// index, same style as `TileTop`.
+
+private struct DiscoverAllCarouselTile: View {
+    let pins: [SuggestedPin]
+    let onPageChange: (SuggestedPin) -> Void
+    let onDismiss: () -> Void
+    @State private var pageIndex: Int? = 0
+    /// True when the user tapped the chevron — switches the page
+    /// frame to a taller layout, reveals the full description (no
+    /// line limit), and exposes the Save / Open-in-Maps actions.
+    @State private var isExpanded: Bool = false
+
+    /// Height of each carousel page. We swap between two pinned
+    /// values so the swipe-paging frame stays predictable (paging
+    /// doesn't play nicely with a self-sizing page that changes mid-
+    /// gesture).
+    // Expanded height accommodates: header (~24) + 4-line description
+    // (~80) + up to 4 detail rows (~88) + chevron row (~26) + padding
+    // (~20). 240–280 covers most real cases; we leave a bit of slack
+    // at 300 so a long description doesn't clip the chevron.
+    private var pageHeight: CGFloat { isExpanded ? 300 : 130 }
 
     var body: some View {
-        // No background rectangle — the parent tile already provides
-        // the glass surface. The slot is just the balloon, centred in
-        // whatever frame the parent allocates (the scroller's full
-        // viewport width × 52pt tall). Swap the SF Symbol for a
-        // Lottie loop / image sequence later without touching
-        // anything around it.
-        Image(systemName: "airballoon.fill")
-            .font(.system(size: 84, weight: .regular))
-            .foregroundStyle(SomedayColors.primary)
+        VStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(Array(pins.enumerated()), id: \.element.id) { idx, pin in
+                        DiscoverAllPage(
+                            pin: pin,
+                            isExpanded: isExpanded,
+                            onToggleExpanded: {
+                                withAnimation(.easeInOut(duration: 0.22)) {
+                                    isExpanded.toggle()
+                                }
+                            }
+                        )
+                        .containerRelativeFrame(.horizontal)
+                        .id(idx)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $pageIndex)
+            // Each swipe lands on a new pageIndex; recenter the map
+            // on the corresponding pin. Guard the bounds so a phantom
+            // scroll-position update during dismiss can't index past
+            // the array.
+            .onChange(of: pageIndex) { old, new in
+                if let new, pins.indices.contains(new) {
+                    // Picker-wheel tick on every page change so swiping
+                    // through the carousel feels like flipping between
+                    // discrete options (same idiom as a segmented
+                    // control or tab swap). Skip on the initial mount
+                    // where old == nil so the tile doesn't ping when it
+                    // first appears.
+                    if old != nil && old != new {
+                        Haptics.select()
+                    }
+                    onPageChange(pins[new])
+                }
+            }
+            .frame(height: pageHeight)
+
+            // Dot strip — hidden for single-pin tiles. Three dots
+            // dancing under one page reads as "there's more here" and
+            // there isn't, so the tile flattens to a single page in
+            // that case.
+            if pins.count > 1 {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 6) {
+                        ForEach(0..<pins.count, id: \.self) { idx in
+                            Circle()
+                                .fill(idx == (pageIndex ?? 0)
+                                      ? SomedayColors.primary
+                                      : SomedayColors.grayMedium.opacity(0.35))
+                                .frame(width: 7, height: 7)
+                                .animation(.easeOut(duration: 0.18), value: pageIndex)
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: true)
+                    Spacer()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.white)
+        .cornerRadius(ChatTileMetrics.cornerRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: ChatTileMetrics.cornerRadius)
+                .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
+        .overlay(alignment: .topTrailing) {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal.opacity(0.7))
+                    .frame(width: 24, height: 24)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1))
+            }
+            .padding(8)
+            .accessibilityLabel("Close suggestion")
+        }
+    }
+}
+
+/// One page of `DiscoverAllCarouselTile`. Compact by default (3-line
+/// description); expanded mode reveals the full description plus
+/// detail rows for opening hours, ticket pricing, phone, and
+/// website (whichever the AI shipped on the suggest link). The
+/// expand chevron lives at the bottom-right of the page so it never
+/// collides with the tile's top-right × dismiss.
+private struct DiscoverAllPage: View {
+    let pin: SuggestedPin
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
+    @Environment(\.openURL) private var openURL
+
+    /// `tel:` URL for a free-form phone string. Strips spaces and
+    /// common punctuation so the system handler can dial it. Nil for
+    /// strings without enough digits to bother.
+    fileprivate func phoneURL(_ phone: String) -> URL? {
+        let digits = phone.filter { "+0123456789".contains($0) }
+        guard digits.count >= 6 else { return nil }
+        return URL(string: "tel:\(digits)")
+    }
+
+    /// "rijksmuseum.nl" instead of "https://www.rijksmuseum.nl/en".
+    /// Keeps the website row legible when the URL gets long.
+    fileprivate func friendlyHost(_ url: URL) -> String? {
+        guard let host = url.host else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(SomedayColors.green)
+                Text(pin.name)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal)
+                    .lineLimit(1)
+                if let cat = pin.category, !cat.isEmpty {
+                    Text("•").foregroundColor(SomedayColors.grayMedium)
+                    Text(cat.capitalized)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(SomedayColors.grayMedium)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(pin.description ?? "AI-suggested spot — tap to expand for actions.")
+                .font(.system(size: 14))
+                .foregroundColor(SomedayColors.charcoal.opacity(0.85))
+                .lineLimit(isExpanded ? nil : 3)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isExpanded {
+                // Detail rows. The AI ships each field URL-encoded on
+                // the suggest link when it knows the value; whichever
+                // are present render here. If everything's nil the
+                // expanded view shows only the description + a small
+                // "More info coming soon" hint so the tile never goes
+                // visually empty.
+                let hasAnyDetail = pin.hours != nil || pin.price != nil || pin.website != nil || pin.phone != nil
+                VStack(alignment: .leading, spacing: 6) {
+                    if let hours = pin.hours, !hours.isEmpty {
+                        DetailRow(icon: "clock.fill", text: hours)
+                    }
+                    if let price = pin.price, !price.isEmpty {
+                        DetailRow(icon: "ticket.fill", text: price)
+                    }
+                    if let phone = pin.phone, !phone.isEmpty {
+                        DetailRow(icon: "phone.fill", text: phone, link: phoneURL(phone))
+                    }
+                    if let website = pin.website, !website.isEmpty, let url = URL(string: website) {
+                        DetailRow(icon: "link", text: friendlyHost(url) ?? website, link: url)
+                    }
+                    if !hasAnyDetail {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                                .foregroundColor(SomedayColors.grayMedium)
+                            Text("Ask the AI for hours, ticket info, or contact details — it'll add them next turn.")
+                                .font(.system(size: 12))
+                                .foregroundColor(SomedayColors.grayMedium)
+                                .lineLimit(2)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            Spacer(minLength: 0)
+
+            // Bottom-right expand chevron. Rotates 180° in expanded
+            // mode so the affordance reads as "this is the toggle".
+            HStack {
+                Spacer()
+                Button(action: onToggleExpanded) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SomedayColors.green)
+                        .frame(width: 28, height: 22)
+                        .background(SomedayColors.lime.opacity(0.22), in: Capsule())
+                        .overlay(Capsule().stroke(SomedayColors.green.opacity(0.4), lineWidth: 1))
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .animation(.easeInOut(duration: 0.22), value: isExpanded)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+}
+
+/// One detail row inside an expanded `DiscoverAllPage`: leading
+/// SF Symbol + text. If `link` is non-nil the whole row becomes a
+/// button that opens the URL via the system handler — used for the
+/// phone (tel:) and website rows; passes nil for hours / price
+/// which are presentational only.
+private struct DetailRow: View {
+    let icon: String
+    let text: String
+    var link: URL? = nil
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let content = HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(SomedayColors.green)
+                .frame(width: 14)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(link != nil ? SomedayColors.green : SomedayColors.charcoal.opacity(0.85))
+                .underline(link != nil)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        if let link {
+            Button { openURL(link) } label: { content }
+                .buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+}
+
+/// One slot inside `TileTop`. Renders the share-sheet teaching
+/// illustration (`shareButtonAirballoon` in Assets.xcassets) — a
+/// crop of the iOS share sheet with the Someday "Hot Air Balloon"
+/// extension icon highlighted, so a first-time user instantly
+/// understands they can save places by sharing into Someday from
+/// any other app.
+///
+/// `phaseDelay` is kept on the type even though we no longer use
+/// it — it stays in the signature so future per-slot animations
+/// can fade/scale at different times without touching the
+/// surrounding tile layout.
+private struct WelcomeAnimationSlot: View {
+    let phaseDelay: Double
+
+    var body: some View {
+        Image("shareButtonAirballoon")
+            .resizable()
+            .scaledToFit()
+            // Inset slightly inside the tile so the illustration
+            // doesn't kiss the rounded corners or the dot strip
+            // underneath. The parent tile (`TileTop`) gives us the
+            // full scroller-width viewport; we just need to leave
+            // a comfortable margin.
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scaleEffect(scaledUp ? 1.10 : 0.92)
-            .animation(
-                .easeInOut(duration: 1.8)
-                    .repeatForever(autoreverses: true)
-                    .delay(phaseDelay),
-                value: scaledUp
-            )
-            .onAppear { scaledUp = true }
     }
 }
