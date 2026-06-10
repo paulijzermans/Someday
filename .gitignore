@@ -40,3 +40,10 @@ Pods/
 heijnrich_chart.py
 heijnrich_contributions.png
 spending_breakdown.png
+
+# ---- Vendored Python extractor (extractor-erik/) ----
+__pycache__/
+*.pyc
+extractor-erik/extractor-test-app/cache/
+extractor-erik/**/*.db
+extractor-erik/.env

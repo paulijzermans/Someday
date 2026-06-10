@@ -1,0 +1,9 @@
+# Pinned to match the inline pip install in Dockerfile.
+# Keep these in sync with the Dockerfile if you bump a version.
+flask
+flask-cors
+google-genai
+python-dotenv
+yt-dlp
+requests
+gunicorn

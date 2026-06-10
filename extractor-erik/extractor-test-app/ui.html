@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Someday — Place Extractor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #0f0f0f; color: #e0e0e0; min-height: 100vh; padding: 40px 24px; }
+
+  .container { max-width: 760px; margin: 0 auto; }
+
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 32px; }
+
+  /* Input */
+  .input-row { display: flex; gap: 10px; margin-bottom: 40px; }
+  .input-row input {
+    flex: 1; padding: 12px 16px; border-radius: 8px;
+    border: 1px solid #333; background: #1a1a1a; color: #e0e0e0;
+    font-size: 0.95rem; outline: none;
+  }
+  .input-row input:focus { border-color: #555; }
+  .input-row button {
+    padding: 12px 22px; border-radius: 8px; border: none;
+    background: #e0e0e0; color: #0f0f0f; font-weight: 600;
+    font-size: 0.95rem; cursor: pointer; white-space: nowrap;
+  }
+  .input-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Cache toggles */
+  .cache-toggles { display: flex; gap: 20px; margin-bottom: 32px; }
+  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .toggle input { display: none; }
+  .toggle-track {
+    width: 36px; height: 20px; border-radius: 99px; background: #333;
+    position: relative; transition: background 0.2s; flex-shrink: 0;
+  }
+  .toggle-track::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 14px; height: 14px; border-radius: 50%; background: #666;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: #1e3a5f; }
+  .toggle input:checked + .toggle-track::after { transform: translateX(16px); background: #3b82f6; }
+  .toggle-label { font-size: 0.85rem; color: #888; }
+  .toggle input:checked ~ .toggle-label { color: #e0e0e0; }
+
+  /* Pipeline timeline */
+  .pipeline { display: flex; flex-direction: column; gap: 0; margin-bottom: 32px; }
+  .step { display: flex; align-items: flex-start; gap: 14px; padding: 14px 0;
+          border-bottom: 1px solid #1e1e1e; cursor: default; }
+  .step:last-child { border-bottom: none; }
+  .step.clickable { cursor: pointer; }
+  .step.clickable:hover .step-label { text-decoration: underline; }
+
+  .dot {
+    width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; margin-top: 2px;
+    border: 2px solid #444; background: transparent; display: flex;
+    align-items: center; justify-content: center; font-size: 11px;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .dot.running  { border-color: #f59e0b; animation: pulse 1s infinite; }
+  .dot.done     { border-color: #22c55e; background: #22c55e; }
+  .dot.error    { border-color: #ef4444; background: #ef4444; }
+  .dot.skipped  { border-color: #3b82f6; background: #1e3a5f; }
+  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
+
+  .step-body { flex: 1; }
+  .step-label { font-size: 0.9rem; font-weight: 500; }
+  .step-label.running  { color: #f59e0b; }
+  .step-label.done     { color: #e0e0e0; }
+  .step-label.error    { color: #ef4444; }
+  .step-label.idle     { color: #555; }
+  .step-label.skipped  { color: #3b82f6; }
+
+  .step-tags { display: flex; gap: 8px; margin-top: 4px; }
+  .tag { font-size: 0.72rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+  .tag.running  { background: #451a03; color: #f59e0b; }
+  .tag.done     { background: #052e16; color: #22c55e; }
+  .tag.error    { background: #450a0a; color: #ef4444; }
+  .tag.skipped  { background: #1e3a5f; color: #3b82f6; }
+
+  /* Detail panel */
+  .detail-panel {
+    margin-top: 8px; background: #1a1a1a; border-radius: 8px;
+    padding: 12px 14px; font-size: 0.8rem; display: none;
+  }
+  .detail-panel.open { display: block; }
+  .detail-panel pre { white-space: pre-wrap; word-break: break-all; color: #bbb; }
+  .detail-error { color: #ef4444; }
+
+  /* Summary bar */
+  .summary-bar {
+    display: none; padding: 14px 18px; border-radius: 10px;
+    margin-bottom: 32px; font-size: 0.9rem; font-weight: 500;
+  }
+  .summary-bar.success { background: #052e16; color: #22c55e; }
+  .summary-bar.failure { background: #450a0a; color: #ef4444; }
+
+  /* Place cards */
+  .places-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: #aaa; }
+  .place-card {
+    background: #1a1a1a; border-radius: 10px; padding: 16px 18px;
+    margin-bottom: 12px; border: 1px solid #2a2a2a;
+  }
+  .place-header { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+  .place-name { font-weight: 700; font-size: 1rem; }
+  .cache-tag { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; flex-shrink: 0; }
+  .cache-tag.cached { background: #1e293b; color: #60a5fa; }
+  .cache-tag.fresh  { background: #052e16; color: #22c55e; }
+  .place-addr { color: #888; font-size: 0.82rem; margin-bottom: 10px; }
+  .place-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-size: 0.75rem; padding: 3px 10px; border-radius: 99px;
+    background: #252525; color: #bbb;
+  }
+  .chip a { color: #60a5fa; text-decoration: none; }
+  .chip a:hover { text-decoration: underline; }
+  .unresolved { color: #555; font-style: italic; font-size: 0.85rem; }
+  .place-gemini { font-size: 0.78rem; color: #555; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Someday</h1>
+  <p class="subtitle">Paste an Instagram Reel URL to extract places</p>
+
+  <div class="input-row">
+    <input id="url-input" type="url" placeholder="https://www.instagram.com/reel/..." />
+    <button id="run-btn" onclick="runPipeline()">Extract</button>
+  </div>
+
+  <div class="cache-toggles">
+    <label class="toggle">
+      <input type="checkbox" id="reel-cache" checked />
+      <span class="toggle-track"></span>
+      <span class="toggle-label">Reel cache</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="place-cache" checked />
+      <span class="toggle-track"></span>
+      <span class="toggle-label">Place cache</span>
+    </label>
+  </div>
+
+  <div class="pipeline" id="pipeline" style="display:none">
+    <!-- steps injected by JS -->
+  </div>
+
+  <div class="summary-bar" id="summary"></div>
+
+  <div class="places-section" id="places-section" style="display:none">
+    <h2>Extracted Places</h2>
+    <div id="places-list"></div>
+  </div>
+</div>
+
+<script>
+const STEPS = [
+  { id: "download", label: "Download Reel" },
+  { id: "transcode", label: "Transcode video" },
+  { id: "gemini",   label: "Gemini extraction" },
+  { id: "places",   label: "Resolve places" },
+  { id: "store",    label: "Save to database" },
+];
+
+let stepState = {};
+let stepOutput = {};
+let stepError  = {};
+let stepMs     = {};
+
+function initPipeline() {
+  stepState = {}; stepOutput = {}; stepError = {}; stepMs = {};
+  const container = document.getElementById("pipeline");
+  container.style.display = "flex";
+  container.innerHTML = STEPS.map(s => `
+    <div class="step" id="step-${s.id}" onclick="toggleDetail('${s.id}')">
+      <div class="dot" id="dot-${s.id}"></div>
+      <div class="step-body">
+        <div class="step-label idle" id="label-${s.id}">${s.label}</div>
+        <div class="step-tags" id="tags-${s.id}"></div>
+        <div class="detail-panel" id="detail-${s.id}"></div>
+      </div>
+    </div>
+  `).join("");
+  document.getElementById("summary").style.display = "none";
+  document.getElementById("places-section").style.display = "none";
+  document.getElementById("places-list").innerHTML = "";
+}
+
+function setStep(id, state, ms, output, error) {
+  stepState[id] = state;
+  if (ms !== undefined) stepMs[id] = ms;
+  if (output !== undefined) stepOutput[id] = output;
+  if (error !== undefined) stepError[id] = error;
+
+  const dot   = document.getElementById(`dot-${id}`);
+  const label = document.getElementById(`label-${id}`);
+  const tags  = document.getElementById(`tags-${id}`);
+  const step  = document.getElementById(`step-${id}`);
+
+  dot.className   = `dot ${state}`;
+  label.className = `step-label ${state}`;
+
+  dot.innerHTML = state === "done" ? "✓" : state === "error" ? "✕" : "";
+
+  let tagHtml = "";
+  if (state === "running") tagHtml = `<span class="tag running">running</span>`;
+  if (state === "done")    tagHtml = `<span class="tag done">done</span>` +
+    (ms ? `<span class="tag done">${ms}ms</span>` : "");
+  if (state === "error")   tagHtml = `<span class="tag error">error</span>` +
+    (ms ? `<span class="tag error">${ms}ms</span>` : "");
+  tags.innerHTML = tagHtml;
+
+  if (state !== "idle") step.classList.add("clickable");
+}
+
+function toggleDetail(id) {
+  const panel = document.getElementById(`detail-${id}`);
+  if (!stepState[id] || stepState[id] === "idle") return;
+  const open = panel.classList.toggle("open");
+  if (!open) return;
+
+  let html = "";
+  if (stepError[id]) {
+    html = `<div class="detail-error">${escHtml(stepError[id])}</div>`;
+  } else if (stepOutput[id] !== undefined) {
+    const out = typeof stepOutput[id] === "string"
+      ? stepOutput[id]
+      : JSON.stringify(stepOutput[id], null, 2);
+    html = `<pre>${escHtml(out)}</pre>`;
+  }
+  panel.innerHTML = html || "<em style='color:#555'>no output</em>";
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function renderPlaces(places) {
+  if (!places || places.length === 0) return;
+  document.getElementById("places-section").style.display = "block";
+  const list = document.getElementById("places-list");
+  list.innerHTML = places.map(p => {
+    const resolved = p.place_id;
+    if (!resolved) {
+      return `<div class="place-card">
+        <div class="place-name">${escHtml(p.gemini_name || p.name || "Unknown")}</div>
+        <div class="unresolved">Could not resolve to a Google Place</div>
+        ${p.gemini_detail ? `<div class="place-gemini">${escHtml(p.gemini_detail)}</div>` : ""}
+      </div>`;
+    }
+    const chips = [];
+    if (p.rating) chips.push(`⭐ ${p.rating} (${(p.rating_count||0).toLocaleString()})`);
+    if (p.price_level) chips.push(priceSymbol(p.price_level));
+    if (p.primary_type) chips.push(p.primary_type.replace(/_/g," "));
+    if (p.business_status && p.business_status !== "OPERATIONAL")
+      chips.push(p.business_status);
+    if (p.phone) chips.push(p.phone);
+    if (p.website) chips.push(`<a href="${escHtml(p.website)}" target="_blank">website</a>`);
+    if (p.google_maps_uri) chips.push(`<a href="${escHtml(p.google_maps_uri)}" target="_blank">maps</a>`);
+
+    const cacheTag = p.from_cache
+      ? `<span class="cache-tag cached">cached</span>`
+      : `<span class="cache-tag fresh">fresh</span>`;
+
+    return `<div class="place-card">
+      <div class="place-header">
+        <div class="place-name">${escHtml(p.display_name || p.gemini_name || "")}</div>
+        ${cacheTag}
+      </div>
+      <div class="place-addr">${escHtml(p.formatted_address || "")}</div>
+      <div class="place-meta">${chips.map(c=>`<span class="chip">${c}</span>`).join("")}</div>
+      ${p.gemini_name ? `<div class="place-gemini">Mentioned as: "${escHtml(p.gemini_name)}"</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function priceSymbol(level) {
+  const map = {
+    PRICE_LEVEL_FREE: "Free",
+    PRICE_LEVEL_INEXPENSIVE: "$",
+    PRICE_LEVEL_MODERATE: "$$",
+    PRICE_LEVEL_EXPENSIVE: "$$$",
+    PRICE_LEVEL_VERY_EXPENSIVE: "$$$$",
+  };
+  return map[level] || level;
+}
+
+async function runPipeline() {
+  const url = document.getElementById("url-input").value.trim();
+  if (!url) return;
+
+  document.getElementById("run-btn").disabled = true;
+  initPipeline();
+
+  let runId;
+  try {
+    const reelCache  = document.getElementById("reel-cache").checked;
+    const placeCache = document.getElementById("place-cache").checked;
+    const resp = await fetch("/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, reel_cache: reelCache, place_cache: placeCache }),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    runId = data.run_id;
+  } catch (e) {
+    alert("Failed to start: " + e.message);
+    document.getElementById("run-btn").disabled = false;
+    return;
+  }
+
+  const es = new EventSource(`/events/${runId}`);
+
+  es.addEventListener("step:start", e => {
+    const d = JSON.parse(e.data);
+    setStep(d.step, "running");
+  });
+
+  es.addEventListener("step:done", e => {
+    const d = JSON.parse(e.data);
+    setStep(d.step, "done", d.duration_ms, d.output);
+  });
+
+  es.addEventListener("step:error", e => {
+    const d = JSON.parse(e.data);
+    setStep(d.step, "error", d.duration_ms, undefined, d.error);
+  });
+
+  es.addEventListener("pipeline:done", e => {
+    const d = JSON.parse(e.data);
+    const bar = document.getElementById("summary");
+    bar.className = "summary-bar success";
+    bar.textContent = `Pipeline complete — ${d.total_ms}ms${d.cached ? " (cached)" : ""}`;
+    bar.style.display = "block";
+    renderPlaces(d.places);
+  });
+
+  es.addEventListener("pipeline:error", e => {
+    const d = JSON.parse(e.data);
+    const bar = document.getElementById("summary");
+    bar.className = "summary-bar failure";
+    bar.textContent = `Pipeline failed — ${d.error}`;
+    bar.style.display = "block";
+  });
+
+  es.addEventListener("stream:close", () => {
+    es.close();
+    document.getElementById("run-btn").disabled = false;
+  });
+
+  es.onerror = () => {
+    es.close();
+    document.getElementById("run-btn").disabled = false;
+  };
+}
+
+document.getElementById("url-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") runPipeline();
+});
+</script>
+</body>
+</html>
