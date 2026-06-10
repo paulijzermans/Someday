@@ -6,6 +6,11 @@ final class MapViewModel {
     var places: [Place] = []
     var friends: [UserProfile] = []
     var selectedPlace: Place?
+    /// Saved pin to make "breathe" on the map WITHOUT opening its card —
+    /// set when the user peeks a pin from chat (Flow C) so the located
+    /// pin is visually obvious behind/below the chat panel. Cleared on
+    /// any deliberate navigation that opens a card or changes context.
+    var peekHighlightPlaceID: String?
     var searchText = ""
     var searchResults: [LocationSearchResult] = []
     var isSearching = false
@@ -617,6 +622,7 @@ final class MapViewModel {
         withAnimation(SomedayAnimations.inTileNav) {
             region = MKCoordinateRegion(center: cameraCentre, span: span)
             selectedPlace = place
+            peekHighlightPlaceID = nil
         }
     }
 
@@ -651,6 +657,7 @@ final class MapViewModel {
                 span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
             )
             selectedPlace = place
+            peekHighlightPlaceID = nil
         }
         Haptics.tap()
         return true
@@ -669,9 +676,12 @@ final class MapViewModel {
                 ?? places.first(where: { $0.id.hasPrefix(idOrPrefix) })
         else { return }
 
+        // Nudge the camera centre SOUTH of the pin so the pin renders in
+        // the visible map strip above the (bottom-anchored) chat panel,
+        // roughly centred in that strip rather than dead-centre behind it.
         let span = 0.012
         let center = CLLocationCoordinate2D(
-            latitude: place.coordinate.latitude - span * 0.32,
+            latitude: place.coordinate.latitude - span * 0.22,
             longitude: place.coordinate.longitude
         )
         withAnimation(SomedayAnimations.inTileNav) {
@@ -679,6 +689,9 @@ final class MapViewModel {
                 center: center,
                 span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
             )
+            // Highlight the located pin (breathing pulse) without opening
+            // its card, so it's unmistakable on the map under the chat.
+            peekHighlightPlaceID = place.id
         }
     }
 
@@ -1218,6 +1231,7 @@ final class MapViewModel {
             selectedPlace = nil
             showSearch = false
             filteredFriendID = nil
+            peekHighlightPlaceID = nil
         }
         Haptics.tap()
     }

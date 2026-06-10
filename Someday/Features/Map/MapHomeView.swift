@@ -786,7 +786,7 @@ struct MapHomeView: View {
             // tile is showing (single-pin tap OR the active page of
             // the Discover All carousel). Either ID may be nil, both
             // may be nil — in which case nothing breathes.
-            breathingPlaceID: vm.selectedPlace?.id,
+            breathingPlaceID: vm.selectedPlace?.id ?? vm.peekHighlightPlaceID,
             breathingSuggestionID: vm.currentSuggestionID
         )
         .ignoresSafeArea()
