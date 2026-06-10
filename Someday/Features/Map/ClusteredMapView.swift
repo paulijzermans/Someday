@@ -454,7 +454,7 @@ class PlacePinAnnotationView: MKAnnotationView {
 
     /// In-memory thumbnail cache, keyed by source URL. Shared across all
     /// pin views so panning back to a place doesn't re-download its photo.
-    private static let imageCache: NSCache<NSURL, UIImage> = {
+    fileprivate static let imageCache: NSCache<NSURL, UIImage> = {
         let c = NSCache<NSURL, UIImage>()
         c.countLimit = 300
         return c
@@ -463,7 +463,7 @@ class PlacePinAnnotationView: MKAnnotationView {
     /// Same curated Unsplash stock photo per category that PlaceCardSheet
     /// uses, but requested at pin size (small crop → ~tens of kB). Keeps a
     /// pin's photo consistent with the card you tap through to.
-    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
+    fileprivate static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
         let photoID: String
         switch category {
         case .food:     photoID = "photo-1414235077428-338989a2e8c0"
@@ -478,7 +478,7 @@ class PlacePinAnnotationView: MKAnnotationView {
 
     /// Download + downsample a place photo to a pin-sized thumbnail. Result
     /// is cached so subsequent pins for the same URL are instant.
-    private static func loadThumbnail(_ url: URL) async -> UIImage? {
+    fileprivate static func loadThumbnail(_ url: URL) async -> UIImage? {
         if let cached = imageCache.object(forKey: url as NSURL) { return cached }
         guard let (data, _) = try? await URLSession.shared.data(from: url),
               let raw = UIImage(data: data) else { return nil }
@@ -611,7 +611,7 @@ class PlacePinAnnotationView: MKAnnotationView {
 
     /// Draw `image` filling `rect` (center-crop, no distortion). Caller is
     /// responsible for clipping to the rounded shape first.
-    private static func drawAspectFill(_ image: UIImage, in rect: CGRect) {
+    fileprivate static func drawAspectFill(_ image: UIImage, in rect: CGRect) {
         let s = image.size
         guard s.width > 0, s.height > 0 else { image.draw(in: rect); return }
         let scale = max(rect.width / s.width, rect.height / s.height)
@@ -685,77 +685,146 @@ class SuggestionPinAnnotationView: MKAnnotationView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Bumped per `prepareForDisplay` so a recycled view never applies a
+    /// late photo for the wrong suggestion. Mirrors `PlacePinAnnotationView`.
+    private var loadGeneration = 0
+
     override func prepareForDisplay() {
         super.prepareForDisplay()
+        guard let sa = annotation as? SuggestionAnnotation else { return }
 
-        // Match `PlacePinAnnotationView` dimensions EXACTLY so the AI
-        // suggestion pin reads as the same family of pin, just lime —
-        // not a separate, oversized "AI banner" pin on the map. The
-        // 7pt bulb radius / 11pt tipDrop / 1.5pt white border are the
-        // saved-pin proportions; we just swap the fill for lime so the
-        // user can spot AI proposals at a glance without breaking the
-        // visual rhythm of the map.
-        let bulbRadius: CGFloat = 7
-        let tipDrop: CGFloat = 11
-        let borderWidth: CGFloat = 1.5
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.22
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: 1.5)
 
-        let canvasW = bulbRadius * 2
-        let canvasH = bulbRadius + tipDrop
-        let center = CGPoint(x: bulbRadius, y: bulbRadius)
-        let tip = CGPoint(x: bulbRadius, y: bulbRadius + tipDrop)
+        // Resolve the AI's free-form category string to our enum so we can
+        // pick the same category-keyed stock photo a saved pin would use.
+        let category = sa.category
+            .flatMap { PlaceCategory(rawValue: $0.lowercased()) } ?? .food
+
+        loadGeneration &+= 1
+        let gen = loadGeneration
+
+        // Suggestions never carry their own image, so always fall back to
+        // the category stock photo — same source PlaceCardSheet / saved
+        // pins use, so the photo-tile reads consistently.
+        let photoURL = PlacePinAnnotationView.categoryFallbackImageURL(category)
+        let cached = photoURL.flatMap {
+            PlacePinAnnotationView.imageCache.object(forKey: $0 as NSURL)
+        }
+        apply(Self.renderTile(category: category, photo: cached))
+
+        if cached == nil, let url = photoURL {
+            Task { [weak self] in
+                guard let img = await PlacePinAnnotationView.loadThumbnail(url) else { return }
+                await MainActor.run {
+                    guard let self,
+                          self.loadGeneration == gen,
+                          (self.annotation as? SuggestionAnnotation)?.suggestionID == sa.suggestionID
+                    else { return }
+                    self.apply(Self.renderTile(category: category, photo: img))
+                }
+            }
+        }
+    }
+
+    private func apply(_ result: (UIImage, CGPoint)) {
+        image = result.0
+        centerOffset = result.1
+    }
+
+    /// Photo-tile pin for AI suggestions: identical rounded-square / pointer
+    /// geometry to `PlacePinAnnotationView.renderTile`, but the white edge is
+    /// swapped for lime so an AI proposal still reads as distinct from the
+    /// user's saved pins while sharing the same tile language.
+    private static func renderTile(category: PlaceCategory, photo: UIImage?) -> (UIImage, CGPoint) {
+        let tileSide: CGFloat = 40
+        let corner: CGFloat = 11
+        let border: CGFloat = 2.5
+        let pointerH: CGFloat = 7
+        let pointerHalf: CGFloat = 6.5
+        let pad: CGFloat = 1.5
+
+        let canvasW = pad + tileSide + pad
+        let canvasH = pad + tileSide + pointerH
+        let tileRect = CGRect(x: pad, y: pad, width: tileSide, height: tileSide)
+        let tip = CGPoint(x: pad + tileSide / 2, y: pad + tileSide + pointerH)
 
         let limeUI = UIColor(SomedayColors.lime)
 
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
-        image = renderer.image { _ in
-            // White outline pin path (head + point).
-            UIColor.white.setFill()
-            Self.pinPath(center: center, radius: bulbRadius, tipDrop: tipDrop).fill()
+        let image = renderer.image { rctx in
+            let cg = rctx.cgContext
 
-            // Lime body, inset by the border width on both bulb radius
-            // AND tipDrop. Matches the two-pass fill PlacePinAnnotationView
-            // uses, so the visual weight of the border is identical.
+            // --- Lime silhouette (rounded tile + pointer) = the edge ---
+            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
+            let pointer = UIBezierPath()
+            let baseY = tileRect.maxY - 0.5
+            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
+            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
+            pointer.addLine(to: tip)
+            pointer.close()
+            silhouette.append(pointer)
+
             limeUI.setFill()
-            Self.pinPath(
-                center: center,
-                radius: bulbRadius - borderWidth,
-                tipDrop: tipDrop - borderWidth
-            ).fill()
+            silhouette.fill()
+            UIColor.black.withAlphaComponent(0.10).setStroke()
+            silhouette.lineWidth = 0.5
+            silhouette.stroke()
+
+            // --- Inner content, clipped to a rounded rect inset by the edge ---
+            let innerRect = tileRect.insetBy(dx: border, dy: border)
+            cg.saveGState()
+            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
+            if let photo {
+                PlacePinAnnotationView.drawAspectFill(photo, in: innerRect)
+            } else {
+                limeUI.setFill()
+                UIRectFill(innerRect)
+                if let icon = UIImage(
+                    systemName: category.icon,
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                    icon.draw(in: CGRect(
+                        x: innerRect.midX - icon.size.width / 2,
+                        y: innerRect.midY - icon.size.height / 2,
+                        width: icon.size.width,
+                        height: icon.size.height
+                    ))
+                }
+            }
+            cg.restoreGState()
+
+            // --- Sparkle badge (top-right) so the AI identity stays legible
+            // even when the photo fills the tile ---
+            let badgeSize: CGFloat = 15
+            let badgeRect = CGRect(
+                x: tileRect.maxX - badgeSize * 0.62,
+                y: tileRect.minY - badgeSize * 0.38,
+                width: badgeSize,
+                height: badgeSize
+            )
+            UIColor.white.setFill()
+            UIBezierPath(ovalIn: badgeRect.insetBy(dx: -1.0, dy: -1.0)).fill()
+            limeUI.setFill()
+            UIBezierPath(ovalIn: badgeRect).fill()
+            if let icon = UIImage(
+                systemName: "sparkles",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+            )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                icon.draw(in: CGRect(
+                    x: badgeRect.midX - icon.size.width / 2,
+                    y: badgeRect.midY - icon.size.height / 2,
+                    width: icon.size.width,
+                    height: icon.size.height
+                ))
+            }
         }
 
-        // Anchor the pin's TIP on the coordinate — identical to the
-        // saved-pin anchor maths so the lat/lon registers in the same
-        // place visually.
-        centerOffset = CGPoint(
-            x: canvasW / 2 - tip.x,
-            y: canvasH / 2 - tip.y
-        )
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.25
-        layer.shadowRadius = 3
-        layer.shadowOffset = CGSize(width: 0, height: 1)
-    }
-
-    /// Same teardrop shape as `PlacePinAnnotationView.pinPath` — same
-    /// arguments, same maths, so the inner / outer pin layers inset
-    /// identically. Kept as a private static here (rather than
-    /// reaching across to PlacePinAnnotationView) to keep the two
-    /// classes self-contained.
-    private static func pinPath(center: CGPoint, radius r: CGFloat, tipDrop L: CGFloat) -> UIBezierPath {
-        let tip = CGPoint(x: center.x, y: center.y + L)
-        let beta = acos(max(-1, min(1, r / L)))
-        let rightAngle = CGFloat.pi / 2 - beta
-        let leftAngle = CGFloat.pi / 2 + beta
-        let rightTangent = CGPoint(
-            x: center.x + r * cos(rightAngle),
-            y: center.y + r * sin(rightAngle)
-        )
-        let path = UIBezierPath()
-        path.move(to: tip)
-        path.addLine(to: rightTangent)
-        path.addArc(withCenter: center, radius: r, startAngle: rightAngle, endAngle: leftAngle, clockwise: false)
-        path.close()
-        return path
+        // Anchor the pointer TIP on the coordinate.
+        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
+        return (image, offset)
     }
 }
 
