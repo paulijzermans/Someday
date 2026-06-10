@@ -407,38 +407,70 @@ struct ImportSummaryCardView: View {
         }
     }
 
-    /// Thumbnail tile — uses the imported photo when the source supplied
-    /// one, else falls back to a tinted square with the category icon.
-    @ViewBuilder
+    /// Thumbnail rendered in the **pin_tile format** — the same rounded
+    /// photo tile with a white edge we draw on the map pins. Always shows
+    /// an image: the place's own photo when the import supplied one, else
+    /// a curated per-category photo (matching the pins + the place card),
+    /// so a freshly-loaded list reads like a row of little pins rather
+    /// than a grid of flat category icons.
     private func thumbnail(for place: Place) -> some View {
-        if let url = place.imageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .empty:
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(categoryColor(for: place.category).opacity(0.16))
-                default:
-                    iconFallback(for: place)
+        let side: CGFloat = 48
+        let corner: CGFloat = 14
+        let border: CGFloat = 2.5
+        return ZStack {
+            // White silhouette = the "slight edge" around the photo.
+            RoundedRectangle(cornerRadius: corner)
+                .fill(.white)
+            tilePhoto(for: place)
+                .frame(width: side - border * 2, height: side - border * 2)
+                .clipShape(RoundedRectangle(cornerRadius: corner - border, style: .continuous))
+        }
+        .frame(width: side, height: side)
+        .overlay(
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 2.5, y: 1)
+    }
+
+    /// The photo that fills the tile. Falls back to the category image, then
+    /// to a tinted square with the category glyph if the network image
+    /// hasn't arrived (or fails) — so the tile is never blank.
+    @ViewBuilder
+    private func tilePhoto(for place: Place) -> some View {
+        let url = place.imageURL ?? Self.categoryFallbackImageURL(place.category)
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .empty:
+                categoryColor(for: place.category).opacity(0.16)
+            default:
+                ZStack {
+                    categoryColor(for: place.category).opacity(0.16)
+                    Image(systemName: place.category.icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(categoryColor(for: place.category))
                 }
             }
-            .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        } else {
-            iconFallback(for: place)
         }
     }
 
-    private func iconFallback(for place: Place) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(categoryColor(for: place.category).opacity(0.16))
-                .frame(width: 44, height: 44)
-            Image(systemName: place.category.icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(categoryColor(for: place.category))
+    /// Curated per-category fallback photo — kept in sync with
+    /// `PlaceCardSheet` and the map pins so the same place shows the same
+    /// imagery everywhere. Pinned to a small crop so AsyncImage caches a
+    /// tiny file per category.
+    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
+        let photoID: String
+        switch category {
+        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
+        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
+        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
+        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
+        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
+        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
         }
+        return URL(string: "https://images.unsplash.com/\(photoID)?w=200&h=200&fit=crop&q=80")
     }
 
     // MARK: - Helpers
