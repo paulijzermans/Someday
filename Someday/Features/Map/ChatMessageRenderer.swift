@@ -1140,70 +1140,190 @@ struct ChatPlacePeekCard: View {
         return hood.isEmpty ? cat : "\(cat) · \(hood)"
     }
 
+    /// List identity colour for the chip / note accent — resolved the same
+    /// way the map renderer resolves it so it matches the on-map pin.
+    private var listColor: Color? {
+        guard let l = listHint, !l.isEmpty else { return nil }
+        return ListVisualStyle.style(for: l).color
+    }
+
+    /// Cover photo. Prefer the place's own imported image; otherwise fall
+    /// back to the same category-keyed stock imagery the AI-suggestion
+    /// tile uses, so a peek of a photo-less pin still reads as a card
+    /// rather than an empty grey banner.
+    private var heroURL: URL? {
+        if let url = place.imageURL { return url }
+        let photoID: String
+        switch place.category {
+        case .food:     photoID = "photo-1414235077428-338989a2e8c0"
+        case .drinks:   photoID = "photo-1551024601-bec78aea704b"
+        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085"
+        case .activity: photoID = "photo-1441974231531-c6227db76b6e"
+        case .art:      photoID = "photo-1531058020387-3be344556be6"
+        case .travel:   photoID = "photo-1488646953014-85cb44e25828"
+        }
+        return URL(string: "https://images.unsplash.com/\(photoID)?w=600&h=400&fit=crop&q=80")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Cover image when the place carries one. Fixed height, fill
-            // + clip so portrait and landscape source images both read
-            // as a clean banner.
-            if let url = place.imageURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure:
-                        Rectangle().fill(SomedayColors.grayLight)
-                    default:
-                        ZStack {
-                            Rectangle().fill(SomedayColors.grayLight)
-                            ProgressView().controlSize(.small)
-                        }
-                    }
-                }
-                .frame(height: 116)
+        VStack(spacing: 0) {
+            hero
+            footer
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.black.opacity(0.05), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+    }
+
+    // MARK: Hero
+
+    private var hero: some View {
+        ZStack(alignment: .bottomLeading) {
+            heroImage
+                .frame(height: 158)
                 .frame(maxWidth: .infinity)
                 .clipped()
-                .cornerRadius(10)
-            }
 
-            // The pin pill the user recognises from the rest of chat.
-            SavedPlacePinPillView(
-                name: place.name,
-                idOrPrefix: place.id,
-                listHint: listHint
+            // Bottom scrim so the white title stays legible over any photo.
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.15), .black.opacity(0.72)],
+                startPoint: .center, endPoint: .bottom
             )
+            .allowsHitTesting(false)
 
-            Text(subtitle)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(SomedayColors.grayMedium)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(place.name)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+                Text(subtitle)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 12)
+        }
+        .frame(height: 158)
+        .overlay(alignment: .topLeading) { identityChip.padding(10) }
+        .overlay(alignment: .topTrailing) { ratingBadge.padding(10) }
+    }
 
-            // The user's own note, if they wrote one — gives the peek a
-            // personal anchor ("you said: …") rather than generic copy.
+    /// Top-left glass chip: the list it lives in (with its colour dot) when
+    /// known, otherwise the category. Anchors the card to where the pin
+    /// sits on the map.
+    @ViewBuilder
+    private var identityChip: some View {
+        HStack(spacing: 5) {
+            if let c = listColor, let l = listHint, !l.isEmpty {
+                Circle().fill(c).frame(width: 7, height: 7)
+                Text(l)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+            } else {
+                Image(systemName: place.category.icon)
+                    .font(.system(size: 10, weight: .bold))
+                Text(place.category.displayName)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+        }
+        .foregroundColor(SomedayColors.charcoal)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    /// Top-right glass star badge when the place carries a rating.
+    @ViewBuilder
+    private var ratingBadge: some View {
+        if let r = place.displayedRating {
+            HStack(spacing: 3) {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.yellow)
+                Text(String(format: "%.1f", r.value))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+
+    // MARK: Footer
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // The user's own note, if any — a personal anchor for the peek.
             if let review = place.review,
                !review.comment.trimmingCharacters(in: .whitespaces).isEmpty {
-                Text(review.comment)
-                    .font(.system(size: 13))
-                    .foregroundColor(SomedayColors.charcoal.opacity(0.85))
-                    .lineLimit(3)
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(listColor ?? SomedayColors.primary)
+                    Text(review.comment)
+                        .font(.system(size: 13))
+                        .foregroundColor(SomedayColors.charcoal.opacity(0.82))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Button(action: onOpenMap) {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     Image(systemName: "map.fill")
                         .font(.system(size: 12, weight: .bold))
                     Text("View on map")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .bold))
                 }
-                .foregroundColor(SomedayColors.green)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(SomedayColors.lime.opacity(0.22), in: Capsule())
-                .overlay(Capsule().stroke(SomedayColors.green.opacity(0.4), lineWidth: 1))
+                .foregroundColor(SomedayColors.charcoal)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity)
+                .background(SomedayColors.lime, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
         }
-        .padding(12)
-        .background(SomedayColors.grayLight)
-        .cornerRadius(14)
+        .padding(14)
+    }
+
+    /// Cover photo with a translucent placeholder while loading and a
+    /// brand-gradient fallback (category glyph) if the fetch fails.
+    @ViewBuilder
+    private var heroImage: some View {
+        AsyncImage(url: heroURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .empty:
+                ZStack {
+                    Rectangle().fill(SomedayColors.grayLight)
+                    ProgressView().controlSize(.small)
+                }
+            default:
+                LinearGradient(
+                    colors: [SomedayColors.primary, SomedayColors.primaryDark],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .overlay(
+                    Image(systemName: place.category.icon)
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.4))
+                )
+            }
+        }
     }
 }
 
