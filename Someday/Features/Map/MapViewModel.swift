@@ -238,10 +238,16 @@ final class MapViewModel {
     private var discoverAllRevealTask: Task<Void, Never>?
 
     /// Drives the choreographed pin deletion (zoom-to-frame → hold →
-    /// pop pins off one-by-one). Held so a second delete can cancel an
-    /// in-flight sweep before starting a new one, and so we never leave
-    /// a half-finished stagger running against a stale id set.
+    /// pop pins off one-by-one). A SINGLE long-lived worker drains
+    /// `pendingRemovalIDs`, so when the chat fires several `delete_place`
+    /// mutations in one turn (a bulk "delete everything in this list")
+    /// they all join the same sweep instead of each restarting it and
+    /// only the last pin surviving the animation.
     private var pinRemovalTask: Task<Void, Never>?
+
+    /// FIFO queue of pin ids still waiting to pop. Appended to by
+    /// `animatePinRemoval`; drained one-per-stagger by the worker.
+    private var pendingRemovalIDs: [String] = []
 
     private let placeService: PlaceServiceProtocol
     private let userService: UserServiceProtocol
@@ -1830,20 +1836,28 @@ final class MapViewModel {
     /// no-ops (so a list-delete with no pins just removes the list).
     @MainActor
     func animatePinRemoval(placeIDs: [String]) {
-        // Keep only ids that actually correspond to a pin on the map,
-        // preserving the caller's order for a predictable sweep.
-        let doomed = placeIDs.filter { id in places.contains { $0.id == id } }
+        // Keep only ids that point at a pin still on the map and aren't
+        // already queued, preserving caller order for a predictable
+        // sweep. Filtering against `pendingRemovalIDs` means a second
+        // call in the same turn extends the sweep rather than double-
+        // queuing a pin.
+        let doomed = placeIDs.filter { id in
+            places.contains { $0.id == id } && !pendingRemovalIDs.contains(id)
+        }
         guard !doomed.isEmpty else { return }
+        pendingRemovalIDs.append(contentsOf: doomed)
 
-        let coords: [CLLocationCoordinate2D] = doomed.compactMap { id in
+        // 1. Frame EVERY still-pending pin (not just this batch) with a
+        //    generous pad so none sit under the screen edges. Clear any
+        //    narrowing UI so the pins stand alone on stage during the
+        //    sweep. Re-framing on each batch lets a bulk delete that
+        //    arrives as several calls converge on a region holding all
+        //    of them.
+        let coords: [CLLocationCoordinate2D] = pendingRemovalIDs.compactMap { id in
             places.first { $0.id == id }.map {
                 CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
             }
         }
-
-        // 1. Frame the doomed pins with a generous pad so none sit under
-        //    the screen edges. Clear any narrowing UI so the pins stand
-        //    alone on stage during the sweep.
         if let target = Self.regionFitting(coords) {
             withAnimation(SomedayAnimations.inTileNav) {
                 region = target
@@ -1853,18 +1867,30 @@ final class MapViewModel {
             }
         }
 
-        // 2. Hold for the camera ease (~0.6s) plus a beat, then pop the
-        //    pins off one at a time. Removing each id from `places`
-        //    prunes its map annotation (ClusteredMapView diffs by id and
-        //    fades the dropped annotation), so the per-step removal reads
-        //    as a pin physically popping away.
-        pinRemovalTask?.cancel()
+        // 2. A single worker drains the queue. If one's already running
+        //    (an earlier call this turn), the ids we just appended get
+        //    picked up by it — don't spin up a second sweep.
+        guard pinRemovalTask == nil else { return }
         pinRemovalTask = Task { [weak self] in
+            // Hold for the camera ease (~0.6s) plus a beat so the user
+            // sees the spread before pins start popping.
             try? await Task.sleep(for: .seconds(0.7))
-            guard !Task.isCancelled, let self else { return }
-            for id in doomed {
-                if Task.isCancelled { break }
-                await MainActor.run {
+            while true {
+                guard let self else { break }
+                // Pop the next pin off `places` (which prunes its map
+                // annotation — ClusteredMapView diffs by id and fades the
+                // dropped annotation, so it reads as a physical pop). When
+                // the queue is empty we clear `pinRemovalTask` in the SAME
+                // MainActor hop that observed the empty queue: that closes
+                // the race where a concurrent `animatePinRemoval` appends
+                // an id and sees a still-non-nil task right as this worker
+                // is winding down, which would strand the new id forever.
+                let didPop: Bool = await MainActor.run {
+                    guard let id = self.pendingRemovalIDs.first else {
+                        self.pinRemovalTask = nil
+                        return false
+                    }
+                    self.pendingRemovalIDs.removeFirst()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
                         self.places.removeAll { $0.id == id }
                         // Wipe local list memberships pointing at this pin
@@ -1875,7 +1901,9 @@ final class MapViewModel {
                         if self.selectedPlace?.id == id { self.selectedPlace = nil }
                     }
                     Haptics.tap()
+                    return true
                 }
+                if !didPop { break }
                 // Quick stagger between pops — fast enough to feel like a
                 // rapid sweep, slow enough that each pin reads as its own
                 // beat.
