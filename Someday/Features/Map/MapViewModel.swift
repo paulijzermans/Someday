@@ -1168,6 +1168,34 @@ final class MapViewModel {
         region = Self.amsterdamOverview
     }
 
+    /// Fly the camera to an arbitrary location the chat asked us to show
+    /// — a country, city, neighbourhood, or landmark — WITHOUT dropping a
+    /// pin or opening any card. Backs the `someday://show?...` action so
+    /// "show me France" / "take me to Lisbon" just moves the map.
+    ///
+    /// `span` is the model's requested degree span (both axes); we clamp
+    /// it to a sane camera range (a city block up to a continent) and
+    /// fall back to a city-level view when it's missing or unusable.
+    @MainActor
+    func flyTo(latitude: Double, longitude: Double, span: Double?) {
+        // Reject NaN / non-finite spans before clamping so a malformed
+        // link can't produce an invalid region.
+        let requested = (span.map { $0.isFinite ? $0 : nil } ?? nil) ?? 0.4
+        let delta = min(max(requested, 0.004), 120)
+        withAnimation(SomedayAnimations.inTileNav) {
+            region = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                span: MKCoordinateSpan(latitudeDelta: delta, longitudeDelta: delta)
+            )
+            // Clear any narrowing UI so the destination isn't half-hidden
+            // behind a card or a friend filter.
+            selectedPlace = nil
+            showSearch = false
+            filteredFriendID = nil
+        }
+        Haptics.tap()
+    }
+
     @MainActor
     func importPlaces(_ newPlaces: [Place]) async {
         // Strip region results before we touch the map. A Google Maps

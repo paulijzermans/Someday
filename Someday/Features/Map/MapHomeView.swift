@@ -616,6 +616,15 @@ struct MapHomeView: View {
             Haptics.medium()
             askSomedayAbout(place)
             return .handled
+
+        case .showOnMap(_, let lat, let lon, let span):
+            // "Show me France" / "take me to Lisbon" — fly the camera to
+            // the location with no pin, no card. Collapse the chat chrome
+            // so the map (already visible below the panel) becomes the
+            // focus as it eases into place.
+            collapseChrome()
+            vm.flyTo(latitude: lat, longitude: lon, span: span)
+            return .handled
         }
     }
 

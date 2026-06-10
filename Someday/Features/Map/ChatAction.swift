@@ -54,6 +54,15 @@ enum ChatAction: Equatable {
     /// Someday about this" affordance on the pin_tile.
     case askAbout(placeID: String)
 
+    /// `someday://show?lat=…&lon=…&name=…&span=…` — fly the map camera
+    /// to an arbitrary location (a country, city, neighbourhood,
+    /// landmark) WITHOUT dropping a pin or opening a card. Lets the user
+    /// say "show me France" / "take me to Lisbon" and have the map just
+    /// go there. `span` is the camera's degree span (both axes); larger
+    /// = more zoomed out (country ≈ 6, city ≈ 0.2, block ≈ 0.01).
+    /// Optional — the view layer falls back to a sane default.
+    case showOnMap(name: String, latitude: Double, longitude: Double, span: Double?)
+
     /// Decode a `someday://` command URL. Returns nil for unrecognised
     /// schemes / hosts so callers can defer to the system handler.
     init?(url: URL) {
@@ -108,6 +117,21 @@ enum ChatAction: Equatable {
                 !id.isEmpty
             else { return nil }
             self = .askAbout(placeID: id)
+
+        case "show":
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            guard
+                let items = comps?.queryItems,
+                let latStr = items.first(where: { $0.name == "lat" })?.value,
+                let lonStr = items.first(where: { $0.name == "lon" })?.value,
+                let lat = Double(latStr),
+                let lon = Double(lonStr)
+            else { return nil }
+            let name = items.first(where: { $0.name == "name" })?.value?
+                .removingPercentEncoding ?? "Location"
+            let span = items.first(where: { $0.name == "span" })?.value
+                .flatMap(Double.init)
+            self = .showOnMap(name: name, latitude: lat, longitude: lon, span: span)
 
         default:
             return nil

@@ -40,6 +40,9 @@ enum InlineToken: Identifiable, Equatable {
     case placeLink(name: String, idOrPrefix: String, listHint: String?)
     case suggestionLink(name: String, category: String, lat: Double, lon: Double)
     case webLink(name: String, url: URL)
+    /// `someday://show?...` — a map-navigation pill (a country, city,
+    /// neighbourhood, landmark). Tap flies the camera there; no pin.
+    case showLink(name: String, lat: Double, lon: Double, span: Double?)
 
     /// Identity per occurrence so SwiftUI can diff across renders.
     var id: String {
@@ -49,6 +52,7 @@ enum InlineToken: Identifiable, Equatable {
         case .placeLink(let n, let id, _):              return "pl:\(id):\(n)"
         case .suggestionLink(let n, _, let la, let lo): return "sl:\(la),\(lo):\(n)"
         case .webLink(_, let url):                      return "wl:\(url.absoluteString)"
+        case .showLink(let n, let la, let lo, _):       return "sh:\(la),\(lo):\(n)"
         }
     }
 }
@@ -244,6 +248,18 @@ enum ChatMessageParser {
             let cat = q("category")?.removingPercentEncoding ?? ""
             return .suggestionLink(name: name, category: cat, lat: lat, lon: lon)
         }
+        if urlString.hasPrefix("someday://show") {
+            // `someday://show?lat=…&lon=…&name=…&span=…` — camera-only
+            // navigation to an arbitrary place (country/city/region).
+            guard let comps = URLComponents(string: urlString) else { return nil }
+            let items = comps.queryItems ?? []
+            func q(_ k: String) -> String? { items.first(where: { $0.name == k })?.value }
+            guard let latStr = q("lat"), let lat = Double(latStr),
+                  let lonStr = q("lon"), let lon = Double(lonStr) else { return nil }
+            let name = q("name")?.removingPercentEncoding ?? label
+            let span = q("span").flatMap(Double.init)
+            return .showLink(name: name, lat: lat, lon: lon, span: span)
+        }
         if let url = URL(string: urlString),
            let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https" {
@@ -382,6 +398,54 @@ struct ListPillView: View {
             )
             .overlay(
                 Capsule().stroke(style.color.opacity(0.35), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Camera-only "take me there" pill. Tapping flies the map to an
+/// arbitrary location (country / city / region) via
+/// `someday://show?lat=…&lon=…&name=…&span=…` — no pin dropped, no
+/// card opened. Styled with a globe glyph to read as navigation rather
+/// than a saved place.
+struct ShowPillView: View {
+    let name: String
+    let lat: Double
+    let lon: Double
+    let span: Double?
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            var comps = URLComponents()
+            comps.scheme = "someday"
+            comps.host = "show"
+            var items: [URLQueryItem] = [
+                URLQueryItem(name: "lat", value: String(lat)),
+                URLQueryItem(name: "lon", value: String(lon)),
+                URLQueryItem(name: "name", value: name)
+            ]
+            if let span { items.append(URLQueryItem(name: "span", value: String(span))) }
+            comps.queryItems = items
+            if let url = comps.url { openURL(url) }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "globe.europe.africa.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(Color.accentColor.opacity(0.14))
+            )
+            .overlay(
+                Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -1225,6 +1289,10 @@ struct ChatMessageBody: View {
             // it matches the on-map `SuggestionPinAnnotationView`. Tapping
             // routes through `OpenURLAction` to drop a real pin.
             SuggestionPinPillView(name: name, category: cat, lat: lat, lon: lon)
+        case .showLink(let name, let lat, let lon, let span):
+            // Camera-only "take me there" pill — tapping flies the map to
+            // an arbitrary place without dropping a pin or opening a card.
+            ShowPillView(name: name, lat: lat, lon: lon, span: span)
         case .webLink(let name, let url):
             ChatLinkText(name: name, url: url)
         }
