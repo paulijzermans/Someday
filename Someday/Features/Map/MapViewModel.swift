@@ -670,18 +670,28 @@ final class MapViewModel {
     /// pulling the chat down reveals the located pin. The center is nudged
     /// south of the pin so it renders in the visible strip above the chat
     /// panel rather than dead-center behind it.
+    /// - Parameter screenFraction: where on screen (0 = top, 1 = bottom)
+    ///   the pin should land. The chat panel is anchored at the TOP and
+    ///   the nav bar at the bottom, so the caller passes the centre of the
+    ///   visible map gap between them (≈ lower third) to park the pin
+    ///   "nicely in the middle" of what the user can actually see. The map
+    ///   fills the whole screen, so a screen fraction maps linearly onto
+    ///   the camera's latitude span.
     @MainActor
-    func revealPlaceUnderChat(_ idOrPrefix: String) {
+    func revealPlaceUnderChat(_ idOrPrefix: String, screenFraction: CGFloat = 0.7) {
         guard let place = places.first(where: { $0.id == idOrPrefix })
                 ?? places.first(where: { $0.id.hasPrefix(idOrPrefix) })
         else { return }
 
-        // Nudge the camera centre SOUTH of the pin so the pin renders in
-        // the visible map strip above the (bottom-anchored) chat panel,
-        // roughly centred in that strip rather than dead-centre behind it.
+        // Offset the camera centre so the pin renders at `screenFraction`
+        // down the screen. A point at fraction p has latitude
+        // `center + (0.5 - p) * span`, so to pin our coordinate there the
+        // centre must be `pinLat + (p - 0.5) * span` — i.e. shift the
+        // centre NORTH of the pin to push the pin DOWN into the lower gap.
         let span = 0.012
+        let bias = Double(screenFraction) - 0.5
         let center = CLLocationCoordinate2D(
-            latitude: place.coordinate.latitude - span * 0.22,
+            latitude: place.coordinate.latitude + span * bias,
             longitude: place.coordinate.longitude
         )
         withAnimation(SomedayAnimations.inTileNav) {

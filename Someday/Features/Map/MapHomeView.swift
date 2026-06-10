@@ -655,10 +655,12 @@ struct MapHomeView: View {
         }) else { return false }
 
         // Move the map underneath to this pin while the chat stays open —
-        // the located pin (already on the map for a saved place) sits in
-        // the visible strip above the chat panel, so a pull-to-peek reveals
-        // it. Does NOT open the place card or collapse the chat.
-        vm.revealPlaceUnderChat(place.id)
+        // the located pin (already on the map for a saved place) lands in
+        // the visible map gap BETWEEN the bottom of the top-anchored chat
+        // panel and the top of the bottom nav bar, centred in that gap so
+        // it isn't overlapped by either. Does NOT open the place card or
+        // collapse the chat.
+        vm.revealPlaceUnderChat(place.id, screenFraction: chatPeekGapFraction())
 
         // If the most recent bubble is already a peek of this place,
         // there's nothing to add — the user is looking at it.
@@ -676,6 +678,46 @@ struct MapHomeView: View {
             )
         }
         return true
+    }
+
+    /// Vertical screen fraction (0 = top, 1 = bottom) of the centre of the
+    /// visible map gap — the band between the BOTTOM of the top-anchored
+    /// chat panel and the TOP of the bottom nav bar. Used to park a
+    /// chat-peeked pin in the middle of what the user can actually see, so
+    /// neither the chat nor the nav bar overlaps it. Adapts as the user
+    /// drags the chat panel taller/shorter.
+    private func chatPeekGapFraction() -> CGFloat {
+        let screenH = max(UIScreen.main.bounds.height, 1)
+        let insets = keyWindowSafeAreaInsets()
+
+        // Top-anchored chat: safe-area top + input bar + grabber +
+        // transcript height. These chrome constants mirror the paddings in
+        // `searchLayer` / `aiChatBar` / `aiConversationPanel`.
+        let chatInputBar: CGFloat = 58   // input row incl. vertical padding
+        let grabber: CGFloat = 16
+        let topPad: CGFloat = 8
+        let chatBottom = insets.top + topPad + chatInputBar + grabber + chatPanelHeight
+
+        // Bottom nav bar: capsule tab bar + its bottom padding + safe area.
+        let navBarHeight: CGFloat = 60
+        let navBarBottomPad: CGFloat = 16
+        let navTop = screenH - (insets.bottom + navBarBottomPad + navBarHeight)
+
+        let gapCenter = (chatBottom + navTop) / 2
+        // Clamp so a very tall panel (gap collapses) still yields a usable,
+        // on-screen target rather than something off the bottom edge.
+        return min(0.9, max(0.45, gapCenter / screenH))
+    }
+
+    /// Safe-area insets of the active key window. Used for off-GeometryReader
+    /// screen math (the map fills the whole screen ignoring safe areas, so
+    /// we account for the chrome insets explicitly).
+    private func keyWindowSafeAreaInsets() -> UIEdgeInsets {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?
+            .safeAreaInsets ?? .zero
     }
 
     /// "View on map" inside a peek card — the deliberate jump out of the
