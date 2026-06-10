@@ -237,6 +237,12 @@ final class MapViewModel {
     /// new one — prevents the camera from snapping to a stale pin.
     private var discoverAllRevealTask: Task<Void, Never>?
 
+    /// Drives the choreographed pin deletion (zoom-to-frame → hold →
+    /// pop pins off one-by-one). Held so a second delete can cancel an
+    /// in-flight sweep before starting a new one, and so we never leave
+    /// a half-finished stagger running against a stale id set.
+    private var pinRemovalTask: Task<Void, Never>?
+
     private let placeService: PlaceServiceProtocol
     private let userService: UserServiceProtocol
     private let searchService: LocationSearchProtocol
@@ -1682,38 +1688,31 @@ final class MapViewModel {
         let listID = listToRemove.id.uuidString
         let listUUID = listToRemove.id
         let pinIDsToDelete = listToRemove.placeIDs
-        // Optimistic local removal: drop the list and every pin it
-        // contained in one animated pass. Use the captured UUID so the
-        // predicate doesn't re-read the mutating array.
+        // Optimistic local removal of the LIST chrome only — drop the
+        // list tile + any transient list-scoped state immediately so the
+        // grid updates. The pins it contained are NOT yanked here; they
+        // get the choreographed zoom-then-pop treatment below so the
+        // user actually sees what's being swept off the map instead of
+        // pins silently vanishing while the camera looks elsewhere.
+        // Use the captured UUID so the predicate doesn't re-read the
+        // mutating array.
         withAnimation(SomedayAnimations.tile) {
             customLists.removeAll { $0.id == listUUID }
-            let toDelete = Set(pinIDsToDelete)
-            if !toDelete.isEmpty {
-                places.removeAll { toDelete.contains($0.id) }
-            }
-            // Clear selection if the open place card was one of the
-            // deleted pins — otherwise the card would hang on an id
-            // that no longer exists.
-            if let sel = selectedPlace, toDelete.contains(sel.id) {
-                selectedPlace = nil
-            }
-            // Same defensive cleanup for transient list-scoped state.
-            // A stale `previewedList` / `previewTargetList` / pending
-            // "add to list" flow pointing at the just-deleted list
-            // would otherwise keep its name alive in the UI and cause
-            // downstream lookups to silently return the wrong row.
+            // Defensive cleanup for transient list-scoped state. A stale
+            // `previewedList` / `previewTargetList` pointing at the just-
+            // deleted list would otherwise keep its name alive in the UI
+            // and cause downstream lookups to silently return the wrong
+            // row.
             if previewedList?.name == name {
                 previewedList = nil
             }
             if previewTargetList == name {
                 previewTargetList = nil
             }
-            // Discover-all & AI suggestion pins that lived only inside
-            // this list don't get auto-pruned by `places.removeAll`
-            // above — they live in their own array — but their IDs
-            // never overlap with `pinIDsToDelete`, so there's nothing
-            // to clean here. (Documented for future reviewers.)
         }
+        // Frame the doomed pins, hold, then pop them away one-by-one.
+        // No-ops gracefully when the list carried no pins.
+        animatePinRemoval(placeIDs: pinIDsToDelete)
         Haptics.warning()
         Task {
             // Delete pins first. `lists.delete` cascades the
@@ -1801,16 +1800,11 @@ final class MapViewModel {
     /// row delete here.
     @MainActor
     func deletePlaceFromChat(placeID: String) async {
-        guard let idx = places.firstIndex(where: { $0.id == placeID }) else { return }
-        withAnimation(SomedayAnimations.tile) {
-            places.remove(at: idx)
-            // Also wipe local list memberships pointing at this pin so
-            // the lists grid doesn't render dangling ids.
-            for i in customLists.indices {
-                customLists[i].placeIDs.removeAll { $0 == placeID }
-            }
-            if selectedPlace?.id == placeID { selectedPlace = nil }
-        }
+        guard places.contains(where: { $0.id == placeID }) else { return }
+        // Frame the pin, hold a beat, then pop it off — same choreography
+        // a list-delete uses, just with a single pin. Local list-
+        // membership + selection cleanup happens inside the helper.
+        animatePinRemoval(placeIDs: [placeID])
         Haptics.warning()
         Task {
             do { try await placeService.deletePlace(placeID) }
@@ -1820,6 +1814,92 @@ final class MapViewModel {
                 #endif
             }
         }
+    }
+
+    /// Choreographed local removal of saved pins from the map. Before a
+    /// pin disappears the user should see *which* pins are going — so we
+    /// (1) zoom the camera to frame every doomed pin, (2) hold briefly so
+    /// the spread registers, then (3) pop them off one-by-one with a
+    /// quick stagger and a tick per pin. Reads as a deliberate sweep
+    /// rather than pins blinking out while the camera looks elsewhere.
+    ///
+    /// Local-only: the caller owns the (fire-and-forget) server delete.
+    /// This method just drives `places`, the dependent list memberships,
+    /// the open place card, and the camera. Safe to call with ids that
+    /// aren't on the map — they're filtered out, and an empty result
+    /// no-ops (so a list-delete with no pins just removes the list).
+    @MainActor
+    func animatePinRemoval(placeIDs: [String]) {
+        // Keep only ids that actually correspond to a pin on the map,
+        // preserving the caller's order for a predictable sweep.
+        let doomed = placeIDs.filter { id in places.contains { $0.id == id } }
+        guard !doomed.isEmpty else { return }
+
+        let coords: [CLLocationCoordinate2D] = doomed.compactMap { id in
+            places.first { $0.id == id }.map {
+                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+            }
+        }
+
+        // 1. Frame the doomed pins with a generous pad so none sit under
+        //    the screen edges. Clear any narrowing UI so the pins stand
+        //    alone on stage during the sweep.
+        if let target = Self.regionFitting(coords) {
+            withAnimation(SomedayAnimations.inTileNav) {
+                region = target
+                selectedPlace = nil
+                showSearch = false
+                filteredFriendID = nil
+            }
+        }
+
+        // 2. Hold for the camera ease (~0.6s) plus a beat, then pop the
+        //    pins off one at a time. Removing each id from `places`
+        //    prunes its map annotation (ClusteredMapView diffs by id and
+        //    fades the dropped annotation), so the per-step removal reads
+        //    as a pin physically popping away.
+        pinRemovalTask?.cancel()
+        pinRemovalTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.7))
+            guard !Task.isCancelled, let self else { return }
+            for id in doomed {
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) {
+                        self.places.removeAll { $0.id == id }
+                        // Wipe local list memberships pointing at this pin
+                        // so the lists grid doesn't render dangling ids.
+                        for i in self.customLists.indices {
+                            self.customLists[i].placeIDs.removeAll { $0 == id }
+                        }
+                        if self.selectedPlace?.id == id { self.selectedPlace = nil }
+                    }
+                    Haptics.tap()
+                }
+                // Quick stagger between pops — fast enough to feel like a
+                // rapid sweep, slow enough that each pin reads as its own
+                // beat.
+                try? await Task.sleep(for: .seconds(0.12))
+            }
+        }
+    }
+
+    /// Smallest `MKCoordinateRegion` that frames every coordinate with a
+    /// comfortable edge pad. Floors the span so a single pin (or a tight
+    /// cluster) doesn't zoom in to street level. Nil for an empty input.
+    private static func regionFitting(_ coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
+        let lats = coords.map(\.latitude)
+        let lons = coords.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else { return nil }
+        let centerLat = (minLat + maxLat) / 2
+        let centerLon = (minLon + maxLon) / 2
+        let spanLat = max((maxLat - minLat) * 1.8, 0.02)
+        let spanLon = max((maxLon - minLon) * 1.8, 0.02)
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
+            span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+        )
     }
 
     /// Reorder the user's custom lists by moving the list whose name
