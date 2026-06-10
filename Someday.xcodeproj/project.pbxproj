@@ -77,6 +77,7 @@
 		A00310 /* AISettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00310 /* AISettings.swift */; };
 		A00311 /* AIAssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00311 /* AIAssistantSettingsView.swift */; };
 		A00312 /* ChatMessageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00312 /* ChatMessageRenderer.swift */; };
+		A00400 /* ChatAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00400 /* ChatAction.swift */; };
 		A00241 /* ChatSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00241 /* ChatSheet.swift */; };
 		BS001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FS001 /* ShareViewController.swift */; };
 		BS002 /* SomedayShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = FS003 /* SomedayShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -161,6 +162,7 @@
 		F00310 /* AISettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettings.swift; sourceTree = "<group>"; };
 		F00311 /* AIAssistantSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantSettingsView.swift; sourceTree = "<group>"; };
 		F00312 /* ChatMessageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessageRenderer.swift; sourceTree = "<group>"; };
+		F00400 /* ChatAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAction.swift; sourceTree = "<group>"; };
 		F00241 /* ChatSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSheet.swift; sourceTree = "<group>"; };
 		F00096 /* ShareRequestTileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareRequestTileView.swift; sourceTree = "<group>"; };
 		F00100 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -466,6 +468,7 @@
 				F00075 /* ImportListView.swift */,
 				F00102 /* MapSubcomponents.swift */,
 				F00312 /* ChatMessageRenderer.swift */,
+				F00400 /* ChatAction.swift */,
 			);
 			path = Map;
 			sourceTree = "<group>";
@@ -738,6 +741,7 @@
 				A00310 /* AISettings.swift in Sources */,
 				A00311 /* AIAssistantSettingsView.swift in Sources */,
 				A00312 /* ChatMessageRenderer.swift in Sources */,
+				A00400 /* ChatAction.swift in Sources */,
 				A00241 /* ChatSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

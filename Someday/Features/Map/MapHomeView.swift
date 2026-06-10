@@ -415,6 +415,9 @@ struct MapHomeView: View {
         chat.messages.removeAll()
         chat.errorMessage = nil
         vm.clearAISuggestionPins()
+        // The bound "ask about this place" context belongs to the
+        // conversation — a fresh session shouldn't inherit it.
+        vm.chatContextPlace = nil
         // The welcome tile pair (TileTop + TileBottom) is a "+ button"
         // affordance only — clearing the conversation must also clear
         // its flag, otherwise the next time the user opens the bar
@@ -447,6 +450,36 @@ struct MapHomeView: View {
         chatInputFocused = true
     }
 
+    /// Open the chat with a place bound as the conversation's context, so
+    /// the user's next question resolves "this place" without retyping
+    /// the name. Triggered by the "Ask Someday about this" affordance on
+    /// the pin_tile and by the `someday://ask?place=…` chat action.
+    ///
+    /// We stash the place in `vm.chatContextPlace` (which survives the
+    /// keyboard-rise tile dismissal, unlike `selectedPlace`) so the
+    /// context builder can feed it to the model, then dismiss the card
+    /// and open the chat focused.
+    @MainActor
+    private func askSomedayAbout(_ place: Place) {
+        vm.chatContextPlace = place
+        withAnimation(SomedayAnimations.tile) {
+            vm.selectedPlace = nil
+            vm.showSearch = true
+            // The welcome tile pair is a "+ button" affordance; an
+            // "ask about this place" session isn't a blank slate, so
+            // suppress it.
+            showWelcomeTiles = false
+        }
+        // Seed a context marker so the user sees what the chat is bound
+        // to before they type. Idempotent — re-tapping "Ask about this"
+        // for the same pin doesn't stack duplicate markers.
+        let markerText = "What would you like to know about **\(place.name)**?"
+        if chat.messages.last?.content != markerText {
+            chat.messages.append(ChatMessage(role: .assistant, content: markerText))
+        }
+        chatInputFocused = true
+    }
+
     /// Handles a tap on a link inside an AI reply. Recognises three
     /// custom schemes:
     ///
@@ -475,42 +508,30 @@ struct MapHomeView: View {
     /// Anything else hits the system handler so http(s) links still
     /// open in Safari.
     private func handleChatLinkTap(_ url: URL) -> OpenURLAction.Result {
-        guard url.scheme == "someday" else { return .systemAction }
+        // One typed decode. Anything that isn't a recognised
+        // `someday://` command (e.g. an http(s) link) falls through to
+        // the system handler so it still opens in Safari.
+        guard url.scheme == "someday", let action = ChatAction(url: url) else {
+            return .systemAction
+        }
+        return perform(action)
+    }
 
-        switch url.host {
-        case "place":
-            // `URL.path` looks like "/<id>"; drop the leading slash.
-            let raw = url.path.split(separator: "/").first.map(String.init)
-                ?? url.lastPathComponent
-            guard !raw.isEmpty else { return .discarded }
+    /// Applies the side effects for a decoded `ChatAction`: haptics,
+    /// camera, and VM mutation. Parsing already happened in
+    /// `ChatAction(url:)`; this is the view-layer half of the action bus.
+    private func perform(_ action: ChatAction) -> OpenURLAction.Result {
+        switch action {
+        case .openPlace(let id):
             // Heavy single beat — the user is committing to a pin from
             // chat, which is the moment of "I want to go look at THIS."
             // Stronger than the .tap() the pin-on-map tap uses so the
             // chat-pin path feels like a deliberate, weighty selection.
             Haptics.heavy()
             collapseChrome()
-            return vm.focusOnPlaceLink(raw) ? .handled : .discarded
+            return vm.focusOnPlaceLink(id) ? .handled : .discarded
 
-        case "suggest":
-            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            guard
-                let items = comps?.queryItems,
-                let latStr = items.first(where: { $0.name == "lat" })?.value,
-                let lonStr = items.first(where: { $0.name == "lon" })?.value,
-                let lat = Double(latStr),
-                let lon = Double(lonStr)
-            else { return .discarded }
-            let name = items.first(where: { $0.name == "name" })?.value ?? "Suggested place"
-            let category = items.first(where: { $0.name == "category" })?.value
-            // Free-form metadata the AI can ship URL-encoded on the
-            // suggest link. All optional — the expanded tile renders
-            // whichever fields are present and graceful-fallbacks the
-            // missing ones.
-            let description = items.first(where: { $0.name == "description" })?.value
-            let hours = items.first(where: { $0.name == "hours" })?.value
-            let price = items.first(where: { $0.name == "price" })?.value
-            let website = items.first(where: { $0.name == "website" })?.value
-            let phone = items.first(where: { $0.name == "phone" })?.value
+        case .suggest(let pin):
             // Same heavy beat as the saved-place chat-pin tap above —
             // the user is committing to a venue the AI proposed, and we
             // want it to feel like a deliberate selection, not a
@@ -518,91 +539,73 @@ struct MapHomeView: View {
             Haptics.heavy()
             collapseChrome()
             vm.focusOnAISuggestion(
-                name: name,
-                category: category,
-                description: description,
-                hours: hours,
-                price: price,
-                website: website,
-                phone: phone,
-                latitude: lat,
-                longitude: lon
+                name: pin.name,
+                category: pin.category,
+                description: pin.description,
+                hours: pin.hours,
+                price: pin.price,
+                website: pin.website,
+                phone: pin.phone,
+                latitude: pin.latitude,
+                longitude: pin.longitude
             )
             // Also surface the bottom info tile — same affordance the
-            // user gets when they tap the pin on the map directly.
-            // We build the pin here (the upsert logic inside
-            // `focusOnAISuggestion` keyed off the same id ran first,
-            // so the array entry already exists; we just need a
-            // value to hand to the carousel tile). Single-element
-            // array → no swipe, no dot strip, full info card.
-            let key = String(format: "%@@%.5f,%.5f", name.lowercased(), lat, lon)
-            let id = key.data(using: .utf8)?.base64EncodedString() ?? key
-            let pin = vm.aiSuggestionPins.first(where: { $0.id == id })
-                ?? SuggestedPin(
-                    id: id,
-                    name: name,
-                    category: category,
-                    description: description,
-                    hours: hours,
-                    price: price,
-                    website: website,
-                    phone: phone,
-                    latitude: lat,
-                    longitude: lon
-                )
-            vm.beginDiscoverAll([pin])
+            // user gets when they tap the pin on the map directly. The
+            // upsert inside `focusOnAISuggestion` keyed off the same id
+            // ran first, so prefer the live array entry; the parsed pin
+            // is the fallback. Single-element array → no swipe, full card.
+            let staged = vm.aiSuggestionPins.first(where: { $0.id == pin.id }) ?? pin
+            vm.beginDiscoverAll([staged])
             return .handled
 
-        case "list":
-            // `URL.path` looks like "/<encoded list name>"; strip the
-            // leading slash and percent-decode so spaces survive.
-            let raw = url.path.hasPrefix("/")
-                ? String(url.path.dropFirst())
-                : url.path
-            let decoded = raw.removingPercentEncoding ?? raw
-            guard !decoded.isEmpty else { return .discarded }
+        case .openList(let name):
             collapseChrome()
-            return vm.focusOnList(named: decoded) ? .handled : .discarded
+            return vm.focusOnList(named: name) ? .handled : .discarded
 
-        case "create-list":
+        case .createList(let name):
             // AI-proposed "Want me to start a [X] list?" confirm link.
-            // Tapping IS the "yes" — no second turn required. We fire
-            // a success haptic so the user feels the commit, then
-            // create the list immediately (idempotent: if a list by
-            // that name already exists, we focus it instead of
-            // duplicating). The new list shows up in the sidebar /
-            // list picker right away via the optimistic update path
-            // in `MapViewModel.createList`.
-            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            guard
-                let name = comps?.queryItems?
-                    .first(where: { $0.name == "name" })?.value?
-                    .removingPercentEncoding,
-                !name.trimmingCharacters(in: .whitespaces).isEmpty
-            else { return .discarded }
-            let trimmed = name.trimmingCharacters(in: .whitespaces)
-
-            // Dedupe against existing lists (case-insensitive) — if
-            // the AI re-offers the same list or the user re-taps the
-            // link, we focus the existing one rather than spawning a
-            // duplicate. Same matching rule as `focusOnList`.
+            // Tapping IS the "yes" — no second turn required.
+            //
+            // Dedupe against existing lists (case-insensitive) — if the
+            // AI re-offers the same list or the user re-taps the link,
+            // we focus the existing one rather than spawning a duplicate.
             if let existing = vm.customLists.first(where: {
-                $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
             }) {
                 Haptics.tap()
                 collapseChrome()
                 _ = vm.focusOnList(named: existing.name)
                 return .handled
             }
-
             // Fresh create. Strong "you committed it" haptic, then
             // optimistic insert via the same path the manual UI uses.
             Haptics.success()
-            vm.createList(name: trimmed, imageData: nil, placeIDs: [])
+            vm.createList(name: name, imageData: nil, placeIDs: [])
             return .handled
 
-        default:
-            return .systemAction
+        case .editMembership(let placeID):
+            // The assistant offered "want to file this somewhere?" — drop
+            // the user straight into the Lists overlay in toggle mode for
+            // this pin. Resolve the live Place first; if it isn't on the
+            // map (yet), there's nothing to file, so discard.
+            guard let place = vm.places.first(where: { $0.id == placeID }) else {
+                return .discarded
+            }
+            Haptics.medium()
+            collapseChrome()
+            vm.beginEditMembership(for: place)
+            return .handled
+
+        case .askAbout(let placeID):
+            // Bind this pin as the chat's context and open the chatbot so
+            // the next question resolves "this place" without the user
+            // retyping the name.
+            guard let place = vm.places.first(where: { $0.id == placeID }) else {
+                return .discarded
+            }
+            Haptics.medium()
+            askSomedayAbout(place)
+            return .handled
         }
     }
 
@@ -2204,6 +2207,14 @@ struct MapHomeView: View {
                     // `vm.endEditMembership()` so the user sees the
                     // updated chip without re-tapping the pin.
                     vm.beginEditMembership(for: place)
+                },
+                onAskAI: {
+                    // Bind this pin as the chat's context and open the
+                    // chatbot — the user can ask about it without
+                    // retyping the name. Same path as the
+                    // `someday://ask?place=…` chat action.
+                    Haptics.medium()
+                    askSomedayAbout(place)
                 }
             )
             .transition(.move(edge: .bottom).combined(with: .opacity))

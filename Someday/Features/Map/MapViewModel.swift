@@ -48,6 +48,19 @@ final class MapViewModel {
     ///     dropped here at the user's request.)
     var membershipEditingPlace: Place?
 
+    /// A pin the user asked the chatbot about ("Ask Someday about this"
+    /// on the pin_tile, or a `someday://ask?place=…` link). Bound as the
+    /// conversation's context so the next message resolves "this place"
+    /// / "here" without the user retyping the name.
+    ///
+    /// Distinct from `selectedPlace` on purpose: opening the chat focuses
+    /// the input, which dismisses the pin_tile (and clears
+    /// `selectedPlace`) so the keyboard has room. `chatContextPlace`
+    /// survives that dismissal so the bound context isn't lost the instant
+    /// the keyboard rises. Cleared when the user clears the context chip
+    /// or sends a message that moves the conversation on.
+    var chatContextPlace: Place?
+
     // MARK: - AI Availability
     //
     // The "Availability" CTA on PlaceCardSheet kicks off an AI lookup of
@@ -355,7 +368,11 @@ final class MapViewModel {
             userName: userName,
             region: region,
             currentCity: currentCityName,
-            selectedPlace: selectedPlace,
+            // Prefer the open pin_tile; fall back to a pin the user
+            // explicitly bound via "Ask Someday about this" so "this
+            // place" / "here" still resolves after the card dismissed to
+            // make room for the keyboard.
+            selectedPlace: selectedPlace ?? chatContextPlace,
             myPlaces: mine,
             friendPlaces: theirs,
             lists: customLists,

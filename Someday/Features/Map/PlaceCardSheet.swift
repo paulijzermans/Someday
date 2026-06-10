@@ -35,6 +35,12 @@ struct PlaceCardSheet: View {
     /// list too (the picker's commit dedupes against the existing list's
     /// `placeIDs`).
     let onAddToListTap: () -> Void
+    /// Tap callback for the "Ask Someday" CTA — opens the chatbot with
+    /// this pin bound as the conversation's context so the user can ask
+    /// "is it any good?" / "what's nearby?" without retyping the name.
+    /// Optional so the card still works in any preview / call site that
+    /// doesn't wire chat.
+    var onAskAI: (() -> Void)? = nil
     /// Environment-supplied URL opener — used by the source badge to
     /// deep-link back to the Instagram Reel / TikTok the place came from.
     @Environment(\.openURL) private var openURL
@@ -485,6 +491,29 @@ struct PlaceCardSheet: View {
                     )
             }
             .foregroundColor(SomedayColors.charcoal)
+
+            // Ask Someday — hands this pin to the chatbot as bound
+            // context. Only shown when the parent wired `onAskAI`.
+            if let onAskAI {
+                Button(action: onAskAI) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [SomedayColors.green, SomedayColors.lime],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(SomedayColors.lime.opacity(0.5), lineWidth: 1.5)
+                        )
+                }
+                .accessibilityLabel("Ask Someday about this place")
+            }
         }
     }
 
