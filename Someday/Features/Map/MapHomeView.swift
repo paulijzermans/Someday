@@ -2503,11 +2503,43 @@ private struct ChatBubbleView: View {
         return result
     }
 
+    /// The place an attachment (peek / availability) resolves to, if any.
+    private var attachedPlace: Place? {
+        guard let pid = msg.attachedPlaceID else { return nil }
+        return vm.places.first(where: { $0.id == pid })
+    }
+
+    /// True when this message carries a Flow-C peek attachment. The peek
+    /// card (chatbot_tile) is rendered as its OWN standalone tile below the
+    /// text bubble — never nested inside the glass text bubble.
+    private var hasPeekCard: Bool {
+        msg.attachmentKind == .peek && attachedPlace != nil
+    }
+
+    /// Whether the glass text bubble should render at all. A message that
+    /// is nothing but a peek card has no text/steps, so we skip the empty
+    /// glass bubble and show only the standalone card.
+    private var showTextBubble: Bool {
+        !msg.steps.isEmpty || !msg.content.isEmpty || msg.attachmentKind == .availability
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if msg.role == .user { Spacer(minLength: 30) }
-            bubbleContent
-                .frame(maxWidth: .infinity, alignment: msg.role == .user ? .trailing : .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                if showTextBubble {
+                    bubbleContent
+                }
+                // chatbot_tile — standalone, NOT inside the text bubble.
+                if hasPeekCard, let place = attachedPlace {
+                    ChatPlacePeekCard(
+                        place: place,
+                        listHint: vm.displayedListName(for: place),
+                        onOpenMap: { onOpenPeekOnMap(place) }
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: msg.role == .user ? .trailing : .leading)
             if msg.role == .assistant { Spacer(minLength: 30) }
         }
         // One light haptic tick each time the assistant emits a new
@@ -2653,39 +2685,30 @@ private struct ChatBubbleView: View {
             // ---- Availability attachment ------------------------
             // Bubbles created by the place-card "Availability" CTA
             // carry an `attachedPlaceID`. Resolve to the live place +
-            // availability state and render the in-chat card.
-            if let pid = msg.attachedPlaceID,
-               let place = vm.places.first(where: { $0.id == pid }) {
-                switch msg.attachmentKind {
-                case .peek:
-                    // Flow C — keep-the-chat-open place preview. "View on
-                    // map" hands off to the full navigate flow.
-                    ChatPlacePeekCard(
-                        place: place,
-                        listHint: vm.displayedListName(for: place),
-                        onOpenMap: { onOpenPeekOnMap(place) }
-                    )
-                case .availability:
-                    ChatAvailabilityCardView(
-                        placeName: place.name,
-                        placeID: place.id,
-                        // Use the SAME resolution the map renderer uses
-                        // (own list → previewed friend list → any friend
-                        // list claiming the id) so the chat pin's colour
-                        // matches the pin you tapped on the map. Reading
-                        // only the user's own lists here meant a friend-
-                        // list pin would tint correctly on the map but
-                        // fall back to Someday primary in chat — visible
-                        // mismatch when you opened Availability.
-                        listHint: vm.displayedListName(for: place),
-                        state: vm.availabilityState(for: place.id),
-                        tonightCheck: vm.tonightCheck(for: place.id),
-                        isCheckingTonight: vm.isCheckingTonight(for: place.id),
-                        onAppearWithReady: {
-                            onCheckTonightForAttachment(place)
-                        }
-                    )
-                }
+            // availability state and render the in-chat card. (The peek
+            // attachment is rendered as its own standalone tile in `body`,
+            // outside this glass bubble.)
+            if msg.attachmentKind == .availability,
+               let place = attachedPlace {
+                ChatAvailabilityCardView(
+                    placeName: place.name,
+                    placeID: place.id,
+                    // Use the SAME resolution the map renderer uses
+                    // (own list → previewed friend list → any friend
+                    // list claiming the id) so the chat pin's colour
+                    // matches the pin you tapped on the map. Reading
+                    // only the user's own lists here meant a friend-
+                    // list pin would tint correctly on the map but
+                    // fall back to Someday primary in chat — visible
+                    // mismatch when you opened Availability.
+                    listHint: vm.displayedListName(for: place),
+                    state: vm.availabilityState(for: place.id),
+                    tonightCheck: vm.tonightCheck(for: place.id),
+                    isCheckingTonight: vm.isCheckingTonight(for: place.id),
+                    onAppearWithReady: {
+                        onCheckTonightForAttachment(place)
+                    }
+                )
             }
         }
         .padding(.horizontal, 12)
