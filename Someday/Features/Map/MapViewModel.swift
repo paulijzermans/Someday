@@ -912,6 +912,16 @@ final class MapViewModel {
         Haptics.tap()
         selectedPlace = nil
 
+        // Fresh discover replaces the previous one — wipe any pins a
+        // prior "Discover all" dropped on the map so successive lists
+        // don't accumulate stale breadcrumbs. The new set is dropped
+        // in below (single-pin focus or multi-pin upsert).
+        discoverAllRevealTask?.cancel()
+        discoverAllRevealTask = nil
+        aiSuggestionPins.removeAll()
+        discoverAllSuggestions.removeAll()
+        currentSuggestionID = nil
+
         // Single-pin fast path: no overview phase, straight to focus
         // + tile (matches the previous behaviour for map-pin taps).
         if pins.count == 1 {
