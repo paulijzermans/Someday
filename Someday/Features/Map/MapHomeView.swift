@@ -2981,35 +2981,20 @@ private struct DiscoverAllCarouselTile: View {
     let onPageChange: (SuggestedPin) -> Void
     let onDismiss: () -> Void
     @State private var pageIndex: Int? = 0
-    /// True when the user tapped the chevron — switches the page
-    /// frame to a taller layout, reveals the full description (no
-    /// line limit), and exposes the Save / Open-in-Maps actions.
-    @State private var isExpanded: Bool = false
 
-    /// Height of each carousel page. We swap between two pinned
-    /// values so the swipe-paging frame stays predictable (paging
-    /// doesn't play nicely with a self-sizing page that changes mid-
-    /// gesture).
-    // Expanded height accommodates: header (~24) + 4-line description
-    // (~80) + up to 4 detail rows (~88) + chevron row (~26) + padding
-    // (~20). 240–280 covers most real cases; we leave a bit of slack
-    // at 300 so a long description doesn't clip the chevron.
-    private var pageHeight: CGFloat { isExpanded ? 300 : 130 }
+    /// Fixed height of each carousel page. The tile mirrors the saved-
+    /// place pin tile (`PlaceCardSheet`): a 96pt square hero on the left
+    /// with the name, category, and description stacked on the right.
+    /// One pinned value keeps the swipe-paging frame predictable (paging
+    /// doesn't play nicely with a self-sizing page).
+    private let pageHeight: CGFloat = 150
 
     var body: some View {
         VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
                     ForEach(Array(pins.enumerated()), id: \.element.id) { idx, pin in
-                        DiscoverAllPage(
-                            pin: pin,
-                            isExpanded: isExpanded,
-                            onToggleExpanded: {
-                                withAnimation(.easeInOut(duration: 0.22)) {
-                                    isExpanded.toggle()
-                                }
-                            }
-                        )
+                        DiscoverAllPage(pin: pin)
                         .containerRelativeFrame(.horizontal)
                         .id(idx)
                     }
@@ -3085,152 +3070,118 @@ private struct DiscoverAllCarouselTile: View {
     }
 }
 
-/// One page of `DiscoverAllCarouselTile`. Compact by default (3-line
-/// description); expanded mode reveals the full description plus
-/// detail rows for opening hours, ticket pricing, phone, and
-/// website (whichever the AI shipped on the suggest link). The
-/// expand chevron lives at the bottom-right of the page so it never
-/// collides with the tile's top-right × dismiss.
+/// One page of `DiscoverAllCarouselTile`. Mirrors the saved-place pin
+/// tile (`PlaceCardSheet`): a 96pt square hero photo on the left, with
+/// the suggestion's name, category, and description stacked on the
+/// right. AI suggestions don't ship their own photo, so the hero is
+/// keyed off the suggested category the same way a saved place without
+/// an imported image falls back to a category stock photo — a `.food`
+/// suggestion shows a restaurant table, `.art` a gallery, etc. The
+/// older expand chevron + detail rows (hours/price/website/phone) are
+/// gone; the tile is now a single informative card.
 private struct DiscoverAllPage: View {
     let pin: SuggestedPin
-    let isExpanded: Bool
-    let onToggleExpanded: () -> Void
-    @Environment(\.openURL) private var openURL
 
-    /// `tel:` URL for a free-form phone string. Strips spaces and
-    /// common punctuation so the system handler can dial it. Nil for
-    /// strings without enough digits to bother.
-    fileprivate func phoneURL(_ phone: String) -> URL? {
-        let digits = phone.filter { "+0123456789".contains($0) }
-        guard digits.count >= 6 else { return nil }
-        return URL(string: "tel:\(digits)")
+    /// Parsed `PlaceCategory` for the suggested category string, used
+    /// for both the meta-row icon and the hero photo lookup. Nil when
+    /// the AI shipped no category or an unrecognised one.
+    private var category: PlaceCategory? {
+        pin.category.flatMap { PlaceCategory(rawValue: $0.lowercased()) }
     }
 
-    /// "rijksmuseum.nl" instead of "https://www.rijksmuseum.nl/en".
-    /// Keeps the website row legible when the URL gets long.
-    fileprivate func friendlyHost(_ url: URL) -> String? {
-        guard let host = url.host else { return nil }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    /// Category-keyed stock photo, mirroring `PlaceCardSheet`'s hero
+    /// fallback so a suggestion tile and a saved-place tile of the same
+    /// category show the same family of imagery. Pinned width + crop so
+    /// AsyncImage caches a small file per category.
+    private var imageURL: URL? {
+        let photoID: String
+        switch category {
+        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
+        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
+        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
+        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
+        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
+        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
+        case nil:       photoID = "photo-1414235077428-338989a2e8c0" // default
+        }
+        return URL(string: "https://images.unsplash.com/\(photoID)?w=400&h=400&fit=crop&q=80")
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(SomedayColors.green)
+        HStack(alignment: .top, spacing: 14) {
+            heroImage
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                // Lime sparkle chip in the corner so the photo still
+                // reads as "AI proposal", echoing the lime suggestion
+                // pin on the map.
+                .overlay(alignment: .bottomLeading) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(SomedayColors.charcoal)
+                        .frame(width: 22, height: 22)
+                        .background(SomedayColors.lime, in: Circle())
+                        .overlay(Circle().stroke(.white, lineWidth: 1.5))
+                        .padding(5)
+                }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text(pin.name)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundColor(SomedayColors.charcoal)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
                 if let cat = pin.category, !cat.isEmpty {
-                    Text("•").foregroundColor(SomedayColors.grayMedium)
-                    Text(cat.capitalized)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(SomedayColors.grayMedium)
+                    HStack(spacing: 6) {
+                        Image(systemName: category?.icon ?? "sparkles")
+                            .font(.system(size: 12))
+                        Text(cat.capitalized)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 13))
+                    .foregroundColor(SomedayColors.grayMedium)
                 }
-                Spacer(minLength: 0)
+
+                Text(pin.description ?? "AI-suggested spot near you.")
+                    .font(.system(size: 14))
+                    .foregroundColor(SomedayColors.charcoal.opacity(0.85))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Text(pin.description ?? "AI-suggested spot — tap to expand for actions.")
-                .font(.system(size: 14))
-                .foregroundColor(SomedayColors.charcoal.opacity(0.85))
-                .lineLimit(isExpanded ? nil : 3)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if isExpanded {
-                // Detail rows. The AI ships each field URL-encoded on
-                // the suggest link when it knows the value; whichever
-                // are present render here. If everything's nil the
-                // expanded view shows only the description + a small
-                // "More info coming soon" hint so the tile never goes
-                // visually empty.
-                let hasAnyDetail = pin.hours != nil || pin.price != nil || pin.website != nil || pin.phone != nil
-                VStack(alignment: .leading, spacing: 6) {
-                    if let hours = pin.hours, !hours.isEmpty {
-                        DetailRow(icon: "clock.fill", text: hours)
-                    }
-                    if let price = pin.price, !price.isEmpty {
-                        DetailRow(icon: "ticket.fill", text: price)
-                    }
-                    if let phone = pin.phone, !phone.isEmpty {
-                        DetailRow(icon: "phone.fill", text: phone, link: phoneURL(phone))
-                    }
-                    if let website = pin.website, !website.isEmpty, let url = URL(string: website) {
-                        DetailRow(icon: "link", text: friendlyHost(url) ?? website, link: url)
-                    }
-                    if !hasAnyDetail {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 11))
-                                .foregroundColor(SomedayColors.grayMedium)
-                            Text("Ask the AI for hours, ticket info, or contact details — it'll add them next turn.")
-                                .font(.system(size: 12))
-                                .foregroundColor(SomedayColors.grayMedium)
-                                .lineLimit(2)
-                        }
-                        .padding(.top, 2)
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            Spacer(minLength: 0)
-
-            // Bottom-right expand chevron. Rotates 180° in expanded
-            // mode so the affordance reads as "this is the toggle".
-            HStack {
-                Spacer()
-                Button(action: onToggleExpanded) {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(SomedayColors.green)
-                        .frame(width: 28, height: 22)
-                        .background(SomedayColors.lime.opacity(0.22), in: Capsule())
-                        .overlay(Capsule().stroke(SomedayColors.green.opacity(0.4), lineWidth: 1))
-                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                        .animation(.easeInOut(duration: 0.22), value: isExpanded)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(isExpanded ? "Collapse details" : "Expand details")
-            }
+            // Top-align the text column to the photo so a short title
+            // sits at the photo's top edge, not floating mid-row.
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
-}
 
-/// One detail row inside an expanded `DiscoverAllPage`: leading
-/// SF Symbol + text. If `link` is non-nil the whole row becomes a
-/// button that opens the URL via the system handler — used for the
-/// phone (tel:) and website rows; passes nil for hours / price
-/// which are presentational only.
-private struct DetailRow: View {
-    let icon: String
-    let text: String
-    var link: URL? = nil
-    @Environment(\.openURL) private var openURL
-
-    var body: some View {
-        let content = HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(SomedayColors.green)
-                .frame(width: 14)
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundColor(link != nil ? SomedayColors.green : SomedayColors.charcoal.opacity(0.85))
-                .underline(link != nil)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-            Spacer(minLength: 0)
-        }
-        if let link {
-            Button { openURL(link) } label: { content }
-                .buttonStyle(.plain)
-        } else {
-            content
+    /// Category stock photo with a graceful translucent placeholder
+    /// while it loads and a brand-gradient fallback if the fetch fails.
+    @ViewBuilder
+    private var heroImage: some View {
+        AsyncImage(url: imageURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .empty:
+                LinearGradient(
+                    colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            default:
+                LinearGradient(
+                    colors: [SomedayColors.primary, SomedayColors.primaryDark],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .overlay(
+                    Image(systemName: category?.icon ?? "sparkles")
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.4))
+                )
+            }
         }
     }
 }
