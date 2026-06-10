@@ -114,21 +114,20 @@ struct ImportSummaryCardView: View {
 
     // MARK: - Slideshow card + page indicator
 
-    /// A single slide in the import slideshow — the standard "pin card"
-    /// format (the layout the user sees when tapping a pin on the map):
-    /// a hero photo, the place name, and the category · neighborhood meta
-    /// line, wrapped in the same white card + primary hairline as
-    /// `PlaceCardSheet`. `position` indexes the place so the corner badge
-    /// can read "2 / 5".
+    /// A single slide in the import slideshow. The content — a hero photo,
+    /// the place name, and the category · neighborhood meta line — sits
+    /// **directly on the floating tile's surface**. We deliberately do NOT
+    /// wrap it in another white card: the slide already lives inside the
+    /// floating glass tile, and a card-in-a-tile reads as a doubled border.
+    /// `position` indexes the place for the page counter.
     private func importedPlaceCard(_ place: Place, position: Int) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Hero photo — fills the top of the card. Same image source as
-            // the pins + place card (the place's own photo, else a curated
-            // per-category fallback), with the source badge bottom-left and
-            // an "added" check top-right.
+            // Hero photo — same image source as the pins + map_pin_tile (the
+            // place's own photo, else a curated per-category fallback), with
+            // the source badge bottom-left and an "added" check top-right.
             tilePhoto(for: place)
                 .frame(maxWidth: .infinity)
-                .frame(height: 150)
+                .frame(height: 160)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(alignment: .bottomLeading) {
                     sourceBadge(for: place).padding(8)
@@ -165,15 +164,7 @@ struct ImportSummaryCardView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
     }
 
     /// Small source chip in the hero's bottom-left — mirrors the pin card.
