@@ -37,8 +37,48 @@ struct Place: Identifiable, Codable, Hashable {
     /// a `source_url` column on the Supabase `place` table.
     var sourceURL: URL?
 
+    /// When this pin represents a TIME-LIMITED EVENT (a one-off food-truck
+    /// stop, a pop-up, a market) rather than a permanent venue. Both nil
+    /// for ordinary places. `eventEnd` is the moment the event is over —
+    /// the map drops the pin once `eventEnd` is in the past, so these
+    /// pins "expire" on their own. Surfaced on the map with a small clock
+    /// badge. In-memory only (no Supabase columns yet); decodes to nil
+    /// for rows that don't carry them.
+    var eventStart: Date?
+    var eventEnd: Date?
+
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    /// True when this pin is a time-limited event (carries an end time).
+    var isEvent: Bool { eventEnd != nil }
+
+    /// True for an event whose end time is still in the future — i.e. one
+    /// that should still be shown. `false` for non-events and for events
+    /// that have already finished (those get filtered off the map).
+    var isActiveEvent: Bool {
+        guard let end = eventEnd else { return false }
+        return end > Date()
+    }
+
+    /// Short human label for how soon the event starts / that it's on now,
+    /// e.g. "Starts in 2h", "Happening now", "Ends 18:30". Nil for
+    /// non-events. Used by the event pin's card / chat surfaces.
+    var eventTimingLabel: String? {
+        guard let end = eventEnd else { return nil }
+        let now = Date()
+        if let start = eventStart, start > now {
+            let mins = Int(start.timeIntervalSince(now) / 60)
+            if mins >= 60 { return "Starts in \(mins / 60)h" }
+            return "Starts in \(max(1, mins))m"
+        }
+        if end > now {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return "On now · ends \(f.string(from: end))"
+        }
+        return "Ended"
     }
 
     /// Rating to display on the map pin, plus the rater (nil = current user).
@@ -67,7 +107,9 @@ struct Place: Identifiable, Codable, Hashable {
         createdAt: Date = .now,
         ownerID: String = "",
         imageURL: URL? = nil,
-        sourceURL: URL? = nil
+        sourceURL: URL? = nil,
+        eventStart: Date? = nil,
+        eventEnd: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -87,6 +129,8 @@ struct Place: Identifiable, Codable, Hashable {
         self.ownerID = ownerID
         self.imageURL = imageURL
         self.sourceURL = sourceURL
+        self.eventStart = eventStart
+        self.eventEnd = eventEnd
     }
 }
 

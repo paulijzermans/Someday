@@ -215,4 +215,60 @@ enum SampleData {
             ownerID: "user_olivia"
         ),
     ]
+
+    // ─────────────────────────────────────────────────────────────
+    //  TIME-LIMITED EVENT PINS
+    // ─────────────────────────────────────────────────────────────
+    // One-off happenings (food-truck stops, pop-ups, night markets)
+    // that are only relevant for a short window. They carry an
+    // `eventStart` / `eventEnd`, render with a small clock badge on the
+    // map, and the map drops them automatically once `eventEnd` passes
+    // (see `MapViewModel.visiblePlaces`). Times are relative to app
+    // launch so a fresh run always has a couple "happening now /
+    // shortly" and lets them expire on their own.
+    //
+    // Kept separate from `places` and merged in DEBUG only via
+    // `MapViewModel.mergeDemoEvents()` so they never touch Supabase.
+    static let events: [Place] = {
+        let now = Date()
+        func at(_ minutes: Double) -> Date { now.addingTimeInterval(minutes * 60) }
+        return [
+            // Happening right now, wraps up in ~90 min.
+            Place(
+                id: "place_event_1", name: "Le Big Mamma Food Truck",
+                category: .food, latitude: 52.3667, longitude: 4.8945,
+                source: .manual, neighborhood: "Centrum",
+                tags: ["Food truck", "Street food", "Pop-up", "€"],
+                isSaved: false, ownerID: "user_paul",
+                eventStart: at(-30), eventEnd: at(90)
+            ),
+            // Starts in ~45 min, runs into the evening.
+            Place(
+                id: "place_event_2", name: "Sunset Wine Pop-up",
+                category: .drinks, latitude: 52.3589, longitude: 4.8821,
+                source: .manual, neighborhood: "De Pijp",
+                tags: ["Pop-up", "Natural wine", "One night only", "€€"],
+                isSaved: false, ownerID: "user_paul",
+                eventStart: at(45), eventEnd: at(300)
+            ),
+            // Starts in ~2h — a night market.
+            Place(
+                id: "place_event_3", name: "Noord Night Market",
+                category: .activity, latitude: 52.3905, longitude: 4.9128,
+                source: .manual, neighborhood: "Noord",
+                tags: ["Night market", "Live music", "Street food", "Free"],
+                isSaved: false, ownerID: "user_paul",
+                eventStart: at(120), eventEnd: at(420)
+            ),
+            // Specialty-coffee cupping, on now for ~2h.
+            Place(
+                id: "place_event_4", name: "Single-Origin Cupping",
+                category: .coffee, latitude: 52.3631, longitude: 4.8896,
+                source: .manual, neighborhood: "Jordaan",
+                tags: ["Tasting", "Pop-up", "Today only", "€"],
+                isSaved: false, ownerID: "user_paul",
+                eventStart: at(-15), eventEnd: at(105)
+            ),
+        ]
+    }()
 }

@@ -455,7 +455,12 @@ class PlacePinAnnotationView: MKAnnotationView {
         // read as visual noise. The PlaceCardSheet's hero image still
         // shows the source badge for provenance.
         let showSourceBadge = false
-        let badgeSize: CGFloat = 9
+        // Time-limited events get a small amber clock badge so they read
+        // as "happening now / soon" and visually distinct from permanent
+        // venues. Driven by `place.isEvent` (presence of an eventEnd).
+        let isEvent = place.isEvent
+        let badgeSize: CGFloat = isEvent ? 11 : 9
+        let showBadge = showSourceBadge || isEvent
 
         // Pin region (head + point), before any badge extension.
         let pinW = bulbRadius * 2
@@ -465,7 +470,7 @@ class PlacePinAnnotationView: MKAnnotationView {
         var topExt: CGFloat = 0
         var rightExt: CGFloat = 0
         var badgeCenterInPin = CGPoint.zero
-        if showSourceBadge {
+        if showBadge {
             badgeCenterInPin = CGPoint(x: pinW - 2.5, y: 2.5)
             let half = badgeSize / 2
             rightExt = max(0, badgeCenterInPin.x + half - pinW)
@@ -488,7 +493,7 @@ class PlacePinAnnotationView: MKAnnotationView {
             fillColor.setFill()
             Self.pinPath(center: center, radius: bulbRadius - borderWidth, tipDrop: tipDrop - borderWidth).fill()
 
-            if showSourceBadge {
+            if showBadge {
                 let badgeRect = CGRect(
                     x: badgeCenterInPin.x - badgeSize / 2,
                     y: badgeCenterInPin.y - badgeSize / 2 + topExt,
@@ -496,7 +501,26 @@ class PlacePinAnnotationView: MKAnnotationView {
                     height: badgeSize
                 )
 
-                if let logo = UIImage(named: place.source.assetName ?? "") {
+                if isEvent {
+                    // Amber circle + white clock glyph, with a white halo so
+                    // it separates cleanly from the pin head underneath.
+                    UIColor.white.setFill()
+                    UIBezierPath(ovalIn: badgeRect.insetBy(dx: -0.8, dy: -0.8)).fill()
+                    UIColor(red: 0.98, green: 0.62, blue: 0.10, alpha: 1).setFill()
+                    UIBezierPath(ovalIn: badgeRect).fill()
+
+                    if let icon = UIImage(
+                        systemName: "clock.fill",
+                        withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .bold)
+                    )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                        icon.draw(in: CGRect(
+                            x: badgeRect.midX - icon.size.width / 2,
+                            y: badgeRect.midY - icon.size.height / 2,
+                            width: icon.size.width,
+                            height: icon.size.height
+                        ))
+                    }
+                } else if let logo = UIImage(named: place.source.assetName ?? "") {
                     // Brand asset already has the correct shape; white halo separates it from the head.
                     UIColor.white.setFill()
                     UIBezierPath(ovalIn: badgeRect.insetBy(dx: -0.6, dy: -0.6)).fill()

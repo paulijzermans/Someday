@@ -536,6 +536,23 @@ final class MapViewModel {
             $0.id.hasPrefix("place_resto_") && !existingPlaceIDs.contains($0.id)
         }
         if !demoPlaces.isEmpty { places.append(contentsOf: demoPlaces) }
+
+        mergeDemoEvents()
+    }
+
+    /// Layer the static demo EVENT pins (food-truck stops, pop-ups, night
+    /// markets) onto `places`. Only the ones still upcoming / in progress
+    /// are added — already-finished mock events are skipped so a long
+    /// session that reloads doesn't resurrect them. DEBUG-only, in-memory;
+    /// never written to Supabase. The map drops each one on its own once
+    /// `eventEnd` passes (via `visiblePlaces`).
+    @MainActor
+    private func mergeDemoEvents() {
+        let existingPlaceIDs = Set(places.map(\.id))
+        let demoEvents = SampleData.events.filter {
+            $0.isActiveEvent && !existingPlaceIDs.contains($0.id)
+        }
+        if !demoEvents.isEmpty { places.append(contentsOf: demoEvents) }
     }
 
     @MainActor
@@ -1060,11 +1077,18 @@ final class MapViewModel {
     }
 
     var visiblePlaces: [Place] {
+        // Time-limited event pins (food-truck pop-ups etc.) drop off the
+        // map the moment they're over — so a finished event never lingers.
+        // Ordinary places (eventEnd == nil) always pass this filter.
+        func notExpired(_ p: Place) -> Bool { !p.isEvent || p.isActiveEvent }
+
         // When previewing a friend's list, the map shows only that list's pins
         // so the user can decide whether to Add them to their own map.
-        if let preview = previewedList { return preview.places }
-        guard let friendID = filteredFriendID else { return places }
-        return places.filter { $0.visitedByIDs.contains(friendID) || $0.recommendedBy == friendID }
+        if let preview = previewedList { return preview.places.filter(notExpired) }
+        guard let friendID = filteredFriendID else { return places.filter(notExpired) }
+        return places.filter {
+            notExpired($0) && ($0.visitedByIDs.contains(friendID) || $0.recommendedBy == friendID)
+        }
     }
 
     // MARK: - List preview
