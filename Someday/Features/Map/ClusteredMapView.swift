@@ -775,7 +775,6 @@ class ClusterPinAnnotationView: MKAnnotationView {
         guard let cluster = annotation as? MKClusterAnnotation else { return }
 
         let count = cluster.memberAnnotations.count
-        let size: CGFloat = 40
 
         // List affinity: if every clustered place belongs to the SAME
         // custom list, tint the cluster in that list's deterministic
@@ -801,35 +800,84 @@ class ClusterPinAnnotationView: MKAnnotationView {
             color = UIColor(SomedayColors.primary)
         }
 
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        image = renderer.image { _ in
-            color.withAlphaComponent(0.2).setFill()
-            UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: size, height: size)).fill()
+        let (img, offset) = Self.renderCountTile(count: count, accent: color)
+        image = img
+        centerOffset = offset
 
-            color.setFill()
-            UIBezierPath(ovalIn: CGRect(x: 5, y: 5, width: size - 10, height: size - 10)).fill()
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.22
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: 1.5)
+    }
 
-            UIColor.white.setStroke()
-            let ring = UIBezierPath(ovalIn: CGRect(x: 5, y: 5, width: size - 10, height: size - 10))
-            ring.lineWidth = 2
-            ring.stroke()
+    /// Cluster tile in the **same photo-tile format** as the place pins —
+    /// a rounded square wrapped in a white edge with a little pointer
+    /// tapering to the coordinate — but filled with the accent colour and
+    /// the member count instead of a photo. Geometry mirrors
+    /// `PlacePinAnnotationView.renderTile` so a cluster reads as "a stack
+    /// of those tiles" rather than a different shape entirely.
+    private static func renderCountTile(count: Int, accent: UIColor) -> (UIImage, CGPoint) {
+        let tileSide: CGFloat = 40
+        let corner: CGFloat = 11
+        let border: CGFloat = 2.5          // the white edge thickness
+        let pointerH: CGFloat = 7
+        let pointerHalf: CGFloat = 6.5
+        let pad: CGFloat = 1.5             // hairline + anti-alias breathing room
 
+        let canvasW = pad + tileSide + pad
+        let canvasH = pad + tileSide + pointerH
+
+        let tileRect = CGRect(x: pad, y: pad, width: tileSide, height: tileSide)
+        let tip = CGPoint(x: pad + tileSide / 2, y: pad + tileSide + pointerH)
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
+        let image = renderer.image { rctx in
+            let cg = rctx.cgContext
+
+            // --- White silhouette (rounded tile + pointer) = the edge ---
+            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
+            let pointer = UIBezierPath()
+            let baseY = tileRect.maxY - 0.5
+            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
+            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
+            pointer.addLine(to: tip)
+            pointer.close()
+            silhouette.append(pointer)
+
+            UIColor.white.setFill()
+            silhouette.fill()
+            UIColor.black.withAlphaComponent(0.10).setStroke()
+            silhouette.lineWidth = 0.5
+            silhouette.stroke()
+
+            // --- Accent fill + count, clipped to the inset rounded rect ---
+            let innerRect = tileRect.insetBy(dx: border, dy: border)
+            cg.saveGState()
+            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
+            accent.setFill()
+            UIRectFill(innerRect)
+
+            // Shrink the font a touch for 3-digit clusters so "100+" stays
+            // inside the tile.
+            let fontSize: CGFloat = count >= 100 ? 13 : 16
             let text = "\(count)" as NSString
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 14, weight: .bold),
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
                 .foregroundColor: UIColor.white
             ]
             let textSize = text.size(withAttributes: attrs)
             text.draw(
-                at: CGPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2),
+                at: CGPoint(
+                    x: innerRect.midX - textSize.width / 2,
+                    y: innerRect.midY - textSize.height / 2
+                ),
                 withAttributes: attrs
             )
+            cg.restoreGState()
         }
 
-        centerOffset = .zero
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.15
-        layer.shadowRadius = 5
-        layer.shadowOffset = CGSize(width: 0, height: 2)
+        // Anchor the pointer TIP on the coordinate — same as the place pins.
+        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
+        return (image, offset)
     }
 }
