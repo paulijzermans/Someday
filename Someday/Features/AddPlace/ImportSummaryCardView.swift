@@ -17,22 +17,23 @@ struct ImportSummaryCardView: View {
     /// (e.g. unit tests) don't have to know about list-add.
     var onAdd: (() -> Void)? = nil
 
-    /// How many of `summary.places` have been revealed so far. Starts
-    /// at 0 on appear, ramps to `summary.places.count` over a staggered
-    /// sequence — each increment fires a haptic tick so the user feels
-    /// every place "land" in the list. Animating in one by one (vs all
-    /// at once) gives the gestalt of "importing now" rather than "here's
-    /// a static list of results".
-    @State private var revealedCount: Int = 0
-    /// Tracks whether the per-row reveal sequence has been kicked off so
-    /// SwiftUI's view churn (re-mounts on parent state change) doesn't
-    /// retrigger it and double-haptic.
-    @State private var didStartReveal: Bool = false
+    /// Which place the slideshow is currently showing. Drives the page
+    /// dots + the "n of m" counter; bound to the paging `TabView`.
+    @State private var currentIndex: Int = 0
+    /// Guards the one-shot "import landed" success haptic so SwiftUI
+    /// re-renders don't re-fire it.
+    @State private var didAnnounce: Bool = false
 
     var body: some View {
-        // `.compact` sits in the lower third of the screen — small,
-        // dismissible, and doesn't take over the map.
-        tile.floatingTile(size: .compact, onDismiss: onDismiss)
+        // Results get the roomier `.half` tile so the slideshow cards have
+        // space to breathe; loading / empty / region states stay snug in
+        // the lower-third `.compact` tile.
+        tile.floatingTile(size: tileSize, onDismiss: onDismiss)
+    }
+
+    private var tileSize: TileSize {
+        if summary.isLoading || summary.isEmpty || allRegions { return .compact }
+        return .half
     }
 
     /// Four render paths driven by the summary state. They share the
@@ -74,62 +75,149 @@ struct ImportSummaryCardView: View {
     // floating × in the top-right so the body has the full width.
 
     private var resultsTile: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 12) {
             closeRow
-            ScrollView {
-                VStack(spacing: 10) {
-                    // Only render rows up to `revealedCount`. Each new
-                    // index is inserted with a top-slide + fade transition
-                    // and accompanied by a haptic tick (fired from the
-                    // reveal Task in `onAppear`).
-                    ForEach(Array(summary.places.prefix(revealedCount).enumerated()), id: \.element.id) { _, place in
-                        placeRow(for: place)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .top).combined(with: .opacity),
-                                removal: .opacity
-                            ))
-                    }
+
+            // Horizontal slideshow — one pin-style card per imported
+            // place. Swipe right to page through everything that landed,
+            // one at a time, instead of scanning a long stacked list.
+            TabView(selection: $currentIndex) {
+                ForEach(Array(summary.places.enumerated()), id: \.element.id) { index, place in
+                    importedPlaceCard(place, position: index)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 4)
+                        .tag(index)
                 }
-                .padding(.horizontal, 2)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(maxHeight: .infinity)
+
+            if summary.places.count > 1 {
+                pageIndicator
+            }
+
             doneButton
         }
         .padding(18)
-        .onAppear(perform: startStaggeredReveal)
+        .onChange(of: currentIndex) { _, _ in Haptics.tap() }
+        .onAppear(perform: announceArrival)
     }
 
-    /// Drive the per-row reveal sequence. Idempotent — guarded by
-    /// `didStartReveal` so SwiftUI re-renders don't restart the loop
-    /// and double-haptic. Cadence:
-    ///   • Total reveal time roughly bounded to 1.4s.
-    ///   • Per-item delay clamped to [50ms, 150ms]. Short lists feel
-    ///     deliberate, long lists feel fast — both still rhythmic.
-    private func startStaggeredReveal() {
-        guard !didStartReveal else { return }
-        didStartReveal = true
-        let total = summary.places.count
-        guard total > 0 else {
-            revealedCount = 0
-            return
-        }
-        // Clamp delay so cadence stays felt across small/large imports.
-        let perItemMs = min(150, max(50, 1400 / total))
-        let delay = Duration.milliseconds(perItemMs)
-        Task { @MainActor in
-            for i in 0..<total {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                    revealedCount = i + 1
+    /// One success haptic the first time the results land. (The old
+    /// staggered per-row reveal was retired when the list became a
+    /// swipeable slideshow.)
+    private func announceArrival() {
+        guard !didAnnounce else { return }
+        didAnnounce = true
+        Haptics.success()
+    }
+
+    // MARK: - Slideshow card + page indicator
+
+    /// A single slide in the import slideshow — the standard "pin card"
+    /// format (the layout the user sees when tapping a pin on the map):
+    /// a hero photo, the place name, and the category · neighborhood meta
+    /// line, wrapped in the same white card + primary hairline as
+    /// `PlaceCardSheet`. `position` indexes the place so the corner badge
+    /// can read "2 / 5".
+    private func importedPlaceCard(_ place: Place, position: Int) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Hero photo — fills the top of the card. Same image source as
+            // the pins + place card (the place's own photo, else a curated
+            // per-category fallback), with the source badge bottom-left and
+            // an "added" check top-right.
+            tilePhoto(for: place)
+                .frame(maxWidth: .infinity)
+                .frame(height: 150)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .bottomLeading) {
+                    sourceBadge(for: place).padding(8)
                 }
-                Haptics.importTick()
-                // Don't sleep after the last item — the success notification
-                // immediately follows so the rhythm closes cleanly.
-                if i < total - 1 {
-                    try? await Task.sleep(for: delay)
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white, SomedayColors.accentGreen)
+                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                        .padding(8)
                 }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(place.name)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                HStack(spacing: 6) {
+                    Image(systemName: place.category.icon)
+                        .font(.system(size: 12))
+                    Text(place.category.displayName)
+                    if !place.neighborhood.isEmpty {
+                        Text("•")
+                        Text(place.neighborhood)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .font(.system(size: 13))
+                .foregroundColor(SomedayColors.grayMedium)
             }
-            // Final beat — distinct from the per-row tick so the user
-            // feels "and we're done" without confusing it with another row.
-            Haptics.success()
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+    }
+
+    /// Small source chip in the hero's bottom-left — mirrors the pin card.
+    /// Manual / friend sources get no badge (nothing to link, the avatar
+    /// already says "from a friend").
+    @ViewBuilder
+    private func sourceBadge(for place: Place) -> some View {
+        if place.source == .manual || place.source == .friend {
+            EmptyView()
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: place.source.icon)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(place.source.label)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.white.opacity(0.92))
+            .foregroundColor(SomedayColors.charcoal)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+        }
+    }
+
+    /// Page dots + "n of m" counter under the slideshow. Tapping a dot
+    /// jumps to that place.
+    private var pageIndicator: some View {
+        HStack(spacing: 8) {
+            ForEach(summary.places.indices, id: \.self) { i in
+                Circle()
+                    .fill(i == currentIndex ? SomedayColors.charcoal : SomedayColors.grayMedium.opacity(0.3))
+                    .frame(width: 7, height: 7)
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            currentIndex = i
+                        }
+                    }
+            }
+            Text("\(currentIndex + 1) of \(summary.places.count)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(SomedayColors.grayMedium)
+                .monospacedDigit()
+                .padding(.leading, 4)
         }
     }
 
@@ -336,36 +424,6 @@ struct ImportSummaryCardView: View {
         }
     }
 
-    // MARK: - Stacked place row tiles
-
-    private func placeRow(for place: Place) -> some View {
-        HStack(spacing: 12) {
-            thumbnail(for: place)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(place.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(SomedayColors.charcoal)
-                    .lineLimit(1)
-                Text(subtitle(for: place))
-                    .font(.system(size: 12))
-                    .foregroundColor(SomedayColors.grayMedium)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(SomedayColors.accentGreen)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.white)
-        .cornerRadius(14)
-        .shadow(color: .black.opacity(0.04), radius: 4, y: 1)
-    }
-
     // MARK: - Footer
     //
     // Two side-by-side CTAs:
@@ -407,35 +465,9 @@ struct ImportSummaryCardView: View {
         }
     }
 
-    /// Thumbnail rendered in the **pin_tile format** — the same rounded
-    /// photo tile with a white edge we draw on the map pins. Always shows
-    /// an image: the place's own photo when the import supplied one, else
-    /// a curated per-category photo (matching the pins + the place card),
-    /// so a freshly-loaded list reads like a row of little pins rather
-    /// than a grid of flat category icons.
-    private func thumbnail(for place: Place) -> some View {
-        let side: CGFloat = 48
-        let corner: CGFloat = 14
-        let border: CGFloat = 2.5
-        return ZStack {
-            // White silhouette = the "slight edge" around the photo.
-            RoundedRectangle(cornerRadius: corner)
-                .fill(.white)
-            tilePhoto(for: place)
-                .frame(width: side - border * 2, height: side - border * 2)
-                .clipShape(RoundedRectangle(cornerRadius: corner - border, style: .continuous))
-        }
-        .frame(width: side, height: side)
-        .overlay(
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 2.5, y: 1)
-    }
-
-    /// The photo that fills the tile. Falls back to the category image, then
-    /// to a tinted square with the category glyph if the network image
-    /// hasn't arrived (or fails) — so the tile is never blank.
+    /// The photo that fills the hero. Falls back to the category image,
+    /// then to a tinted panel with the category glyph if the network image
+    /// hasn't arrived (or fails) — so the card is never blank.
     @ViewBuilder
     private func tilePhoto(for place: Place) -> some View {
         let url = place.imageURL ?? Self.categoryFallbackImageURL(place.category)
@@ -474,11 +506,6 @@ struct ImportSummaryCardView: View {
     }
 
     // MARK: - Helpers
-
-    private func subtitle(for place: Place) -> String {
-        let pieces: [String] = [place.neighborhood, place.category.displayName]
-        return pieces.filter { !$0.isEmpty }.joined(separator: " · ")
-    }
 
     private func categoryColor(for category: PlaceCategory) -> Color {
         switch category {
