@@ -401,180 +401,223 @@ class PlacePinAnnotationView: MKAnnotationView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Bumped on every `prepareForDisplay`. An in-flight async photo load
+    /// captures the value at kickoff and only applies its result if the
+    /// generation still matches — so a reused view (MapKit recycles
+    /// annotation views) never gets a late image for the wrong place.
+    private var loadGeneration = 0
+
     override func prepareForDisplay() {
         super.prepareForDisplay()
         guard let pa = annotation as? PlaceAnnotation else { return }
 
         let place = pa.place
-        // Pass listName through so the renderer can swap in the list's
-        // colour. Nil = use the default `pinColor(for:)` heuristic.
-        let (img, offset) = Self.renderPin(place: place, listName: pa.listName)
-        image = img
-        centerOffset = offset
+        let listName = pa.listName
 
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.25
+        layer.shadowOpacity = 0.22
         layer.shadowRadius = 3
-        layer.shadowOffset = CGSize(width: 0, height: 1)
+        layer.shadowOffset = CGSize(width: 0, height: 1.5)
+
+        loadGeneration &+= 1
+        let gen = loadGeneration
+
+        // Photo source mirrors PlaceCardSheet: the imported `imageURL` when
+        // the place has one (Google Maps photo, Reel cover), otherwise a
+        // category-keyed stock photo so every pin shows imagery — same as
+        // the card the user taps through to.
+        let photoURL = place.imageURL ?? Self.categoryFallbackImageURL(place.category)
+
+        // Draw the tile immediately. If we already have the photo cached,
+        // use it; otherwise show the category placeholder and fetch.
+        let cached = photoURL.flatMap { Self.imageCache.object(forKey: $0 as NSURL) }
+        apply(Self.renderTile(place: place, listName: listName, photo: cached))
+
+        if cached == nil, let url = photoURL {
+            Task { [weak self] in
+                guard let img = await Self.loadThumbnail(url) else { return }
+                await MainActor.run {
+                    guard let self,
+                          self.loadGeneration == gen,
+                          (self.annotation as? PlaceAnnotation)?.place.id == place.id
+                    else { return }
+                    self.apply(Self.renderTile(place: place, listName: listName, photo: img))
+                }
+            }
+        }
     }
 
-    /// Single unified renderer:
-    /// - White edge on every pin.
-    /// - Visited (rated) pins use a darker fill and show the rating pill bottom-right.
-    /// - Unvisited pins use the normal fill and show a source logo bottom-right (Instagram, Facebook, etc).
-    private static func renderPin(place: Place, listName: String? = nil) -> (UIImage, CGPoint) {
-        let borderWidth: CGFloat = 1.5
-        let bulbRadius: CGFloat = 7        // radius of the round head
-        let tipDrop: CGFloat = 11          // how far the point extends below the head center
+    private func apply(_ result: (UIImage, CGPoint)) {
+        image = result.0
+        centerOffset = result.1
+    }
 
-        // List-colour override wins over the default heuristic so a pin's
-        // colour matches the list it lives in (rose / blue / amber / …).
-        let baseColor: UIColor
-        let usingListColor: Bool
-        if let listName, !listName.isEmpty {
-            baseColor = UIColor(ListVisualStyle.style(for: listName).color)
-            usingListColor = true
-        } else {
-            baseColor = Self.pinColor(for: place)
-            usingListColor = false
+    /// In-memory thumbnail cache, keyed by source URL. Shared across all
+    /// pin views so panning back to a place doesn't re-download its photo.
+    private static let imageCache: NSCache<NSURL, UIImage> = {
+        let c = NSCache<NSURL, UIImage>()
+        c.countLimit = 300
+        return c
+    }()
+
+    /// Same curated Unsplash stock photo per category that PlaceCardSheet
+    /// uses, but requested at pin size (small crop → ~tens of kB). Keeps a
+    /// pin's photo consistent with the card you tap through to.
+    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
+        let photoID: String
+        switch category {
+        case .food:     photoID = "photo-1414235077428-338989a2e8c0"
+        case .drinks:   photoID = "photo-1551024601-bec78aea704b"
+        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085"
+        case .activity: photoID = "photo-1441974231531-c6227db76b6e"
+        case .art:      photoID = "photo-1531058020387-3be344556be6"
+        case .travel:   photoID = "photo-1488646953014-85cb44e25828"
         }
-        // Visited-darkening only applies to default-coloured pins (no
-        // list). When a pin's colour is dictated by its list, the list
-        // identity is the signal we want to preserve — darkening it
-        // would make pins in the same list visually disagree depending
-        // on whether they happen to be reviewed. Keep them all on the
-        // list's exact palette so the list reads as one cluster.
-        let isVisited = place.displayedRating?.value != nil
-        let fillColor = (isVisited && !usingListColor)
-            ? baseColor.darkened(by: 0.35)
-            : baseColor
+        return URL(string: "https://images.unsplash.com/\(photoID)?w=160&h=160&fit=crop&q=80")
+    }
 
-        // Source-logo badge was previously rendered on the head for
-        // unvisited, non-manual saves (Instagram pink, TikTok teal etc.)
-        // — disabled because the third-party brand marks at this size
-        // read as visual noise. The PlaceCardSheet's hero image still
-        // shows the source badge for provenance.
-        let showSourceBadge = false
-        // Time-limited events get a small amber clock badge so they read
-        // as "happening now / soon" and visually distinct from permanent
-        // venues. Driven by `place.isEvent` (presence of an eventEnd).
+    /// Download + downsample a place photo to a pin-sized thumbnail. Result
+    /// is cached so subsequent pins for the same URL are instant.
+    private static func loadThumbnail(_ url: URL) async -> UIImage? {
+        if let cached = imageCache.object(forKey: url as NSURL) { return cached }
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let raw = UIImage(data: data) else { return nil }
+        let thumb = downsample(raw, maxPoints: 120)
+        imageCache.setObject(thumb, forKey: url as NSURL)
+        return thumb
+    }
+
+    /// Shrink an image so its longest side is at most `maxPoints` (in points,
+    /// at screen scale). Keeps pin photos tiny in memory — the tile is 40pt.
+    private static func downsample(_ image: UIImage, maxPoints: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxPoints else { return image }
+        let ratio = maxPoints / longest
+        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat.default()
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+    }
+
+    /// Rounded photo-tile pin: a small rounded-square showing the place's
+    /// photo (or a category-coloured placeholder when there's none), wrapped
+    /// in a white edge, with a little pointer tapering to the coordinate.
+    /// Time-limited events keep the amber clock badge on the top-right.
+    private static func renderTile(place: Place, listName: String?, photo: UIImage?) -> (UIImage, CGPoint) {
+        let tileSide: CGFloat = 40
+        let corner: CGFloat = 11
+        let border: CGFloat = 2.5          // the white edge thickness
+        let pointerH: CGFloat = 7
+        let pointerHalf: CGFloat = 6.5
+
         let isEvent = place.isEvent
-        let badgeSize: CGFloat = isEvent ? 11 : 9
-        let showBadge = showSourceBadge || isEvent
+        let badgeSize: CGFloat = 15
+        // Reserve room top/right for the event badge overhang (and a hair of
+        // padding for the outer hairline + anti-aliasing on every pin).
+        let topPad: CGFloat = isEvent ? badgeSize / 2 : 1.5
+        let rightPad: CGFloat = isEvent ? badgeSize / 2 : 1.5
+        let leftPad: CGFloat = 1.5
 
-        // Pin region (head + point), before any badge extension.
-        let pinW = bulbRadius * 2
-        let pinH = bulbRadius + tipDrop
+        let canvasW = leftPad + tileSide + rightPad
+        let canvasH = topPad + tileSide + pointerH
 
-        // Badge sits on the upper-right of the head; it may extend the canvas up/right.
-        var topExt: CGFloat = 0
-        var rightExt: CGFloat = 0
-        var badgeCenterInPin = CGPoint.zero
-        if showBadge {
-            badgeCenterInPin = CGPoint(x: pinW - 2.5, y: 2.5)
-            let half = badgeSize / 2
-            rightExt = max(0, badgeCenterInPin.x + half - pinW)
-            topExt = max(0, half - badgeCenterInPin.y)
-        }
+        let tileRect = CGRect(x: leftPad, y: topPad, width: tileSide, height: tileSide)
+        let tip = CGPoint(x: leftPad + tileSide / 2, y: topPad + tileSide + pointerH)
 
-        let canvasWidth = pinW + rightExt
-        let canvasHeight = pinH + topExt
+        // Accent = list colour if the pin belongs to a list, else the
+        // default per-place heuristic. Used for the no-photo placeholder.
+        let accent: UIColor = {
+            if let listName, !listName.isEmpty {
+                return UIColor(ListVisualStyle.style(for: listName).color)
+            }
+            return Self.pinColor(for: place)
+        }()
 
-        // Everything is shifted down by topExt so nothing draws off-canvas.
-        let center = CGPoint(x: bulbRadius, y: bulbRadius + topExt)
-        let tip = CGPoint(x: center.x, y: center.y + tipDrop)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
+        let image = renderer.image { rctx in
+            let cg = rctx.cgContext
 
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasWidth, height: canvasHeight))
-        let image = renderer.image { _ in
-            // White outline pin (the border)…
+            // --- White silhouette (rounded tile + pointer) = the edge ---
+            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
+            let pointer = UIBezierPath()
+            let baseY = tileRect.maxY - 0.5
+            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
+            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
+            pointer.addLine(to: tip)
+            pointer.close()
+            silhouette.append(pointer)
+
             UIColor.white.setFill()
-            Self.pinPath(center: center, radius: bulbRadius, tipDrop: tipDrop).fill()
-            // …then the colored body, inset by the border width.
-            fillColor.setFill()
-            Self.pinPath(center: center, radius: bulbRadius - borderWidth, tipDrop: tipDrop - borderWidth).fill()
+            silhouette.fill()
+            // Subtle outer hairline so the white edge stays legible on light maps.
+            UIColor.black.withAlphaComponent(0.10).setStroke()
+            silhouette.lineWidth = 0.5
+            silhouette.stroke()
 
-            if showBadge {
+            // --- Inner content, clipped to a rounded rect inset by the edge ---
+            let innerRect = tileRect.insetBy(dx: border, dy: border)
+            cg.saveGState()
+            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
+            if let photo {
+                drawAspectFill(photo, in: innerRect)
+            } else {
+                accent.setFill()
+                UIRectFill(innerRect)
+                if let icon = UIImage(
+                    systemName: place.category.icon,
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                    icon.draw(in: CGRect(
+                        x: innerRect.midX - icon.size.width / 2,
+                        y: innerRect.midY - icon.size.height / 2,
+                        width: icon.size.width,
+                        height: icon.size.height
+                    ))
+                }
+            }
+            cg.restoreGState()
+
+            // --- Event clock badge (top-right, overhanging the tile) ---
+            if isEvent {
                 let badgeRect = CGRect(
-                    x: badgeCenterInPin.x - badgeSize / 2,
-                    y: badgeCenterInPin.y - badgeSize / 2 + topExt,
+                    x: tileRect.maxX - badgeSize * 0.62,
+                    y: tileRect.minY - badgeSize * 0.38,
                     width: badgeSize,
                     height: badgeSize
                 )
-
-                if isEvent {
-                    // Amber circle + white clock glyph, with a white halo so
-                    // it separates cleanly from the pin head underneath.
-                    UIColor.white.setFill()
-                    UIBezierPath(ovalIn: badgeRect.insetBy(dx: -0.8, dy: -0.8)).fill()
-                    UIColor(red: 0.98, green: 0.62, blue: 0.10, alpha: 1).setFill()
-                    UIBezierPath(ovalIn: badgeRect).fill()
-
-                    if let icon = UIImage(
-                        systemName: "clock.fill",
-                        withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .bold)
-                    )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                        icon.draw(in: CGRect(
-                            x: badgeRect.midX - icon.size.width / 2,
-                            y: badgeRect.midY - icon.size.height / 2,
-                            width: icon.size.width,
-                            height: icon.size.height
-                        ))
-                    }
-                } else if let logo = UIImage(named: place.source.assetName ?? "") {
-                    // Brand asset already has the correct shape; white halo separates it from the head.
-                    UIColor.white.setFill()
-                    UIBezierPath(ovalIn: badgeRect.insetBy(dx: -0.6, dy: -0.6)).fill()
-                    logo.draw(in: badgeRect)
-                } else {
-                    // Fallback: colored circle + SF Symbol glyph
-                    place.source.badgeColor.setFill()
-                    UIBezierPath(ovalIn: badgeRect).fill()
-                    UIColor.white.setStroke()
-                    let stroke = UIBezierPath(ovalIn: badgeRect.insetBy(dx: 0.6, dy: 0.6))
-                    stroke.lineWidth = 1.2
-                    stroke.stroke()
-
-                    if let icon = UIImage(
-                        systemName: place.source.icon,
-                        withConfiguration: UIImage.SymbolConfiguration(pointSize: 7, weight: .bold)
-                    )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                        icon.draw(in: CGRect(
-                            x: badgeRect.midX - icon.size.width / 2,
-                            y: badgeRect.midY - icon.size.height / 2,
-                            width: icon.size.width,
-                            height: icon.size.height
-                        ))
-                    }
+                UIColor.white.setFill()
+                UIBezierPath(ovalIn: badgeRect.insetBy(dx: -1.0, dy: -1.0)).fill()
+                UIColor(red: 0.98, green: 0.62, blue: 0.10, alpha: 1).setFill()
+                UIBezierPath(ovalIn: badgeRect).fill()
+                if let icon = UIImage(
+                    systemName: "clock.fill",
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                    icon.draw(in: CGRect(
+                        x: badgeRect.midX - icon.size.width / 2,
+                        y: badgeRect.midY - icon.size.height / 2,
+                        width: icon.size.width,
+                        height: icon.size.height
+                    ))
                 }
             }
         }
 
-        // Anchor the pin's TIP on the coordinate.
-        let offset = CGPoint(
-            x: canvasWidth / 2 - tip.x,
-            y: canvasHeight / 2 - tip.y
-        )
+        // Anchor the pointer TIP on the coordinate.
+        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
         return (image, offset)
     }
 
-    /// A classic map-pin outline: a circular head tapering to a point at the bottom.
-    private static func pinPath(center: CGPoint, radius r: CGFloat, tipDrop L: CGFloat) -> UIBezierPath {
-        let tip = CGPoint(x: center.x, y: center.y + L)
-        let beta = acos(max(-1, min(1, r / L)))     // half-angle of the taper at the head center
-        let rightAngle = CGFloat.pi / 2 - beta       // tangent point on the lower-right of the head
-        let leftAngle = CGFloat.pi / 2 + beta        // tangent point on the lower-left
-        let rightTangent = CGPoint(
-            x: center.x + r * cos(rightAngle),
-            y: center.y + r * sin(rightAngle)
-        )
-
-        let path = UIBezierPath()
-        path.move(to: tip)
-        path.addLine(to: rightTangent)
-        // Sweep over the top of the head from the right tangent around to the left tangent.
-        path.addArc(withCenter: center, radius: r, startAngle: rightAngle, endAngle: leftAngle, clockwise: false)
-        path.close()
-        return path
+    /// Draw `image` filling `rect` (center-crop, no distortion). Caller is
+    /// responsible for clipping to the rounded shape first.
+    private static func drawAspectFill(_ image: UIImage, in rect: CGRect) {
+        let s = image.size
+        guard s.width > 0, s.height > 0 else { image.draw(in: rect); return }
+        let scale = max(rect.width / s.width, rect.height / s.height)
+        let drawSize = CGSize(width: s.width * scale, height: s.height * scale)
+        let origin = CGPoint(x: rect.midX - drawSize.width / 2, y: rect.midY - drawSize.height / 2)
+        image.draw(in: CGRect(origin: origin, size: drawSize))
     }
 
     private static func pinColor(for place: Place) -> UIColor {
