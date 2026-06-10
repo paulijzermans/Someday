@@ -1067,6 +1067,100 @@ struct ChatAvailabilityCardView: View {
     }
 }
 
+// =============================================================================
+// ChatPlacePeekCard — lightweight in-chat preview of a saved pin
+// =============================================================================
+//
+// Rendered inside an assistant bubble whose `attachmentKind == .peek`.
+// Surfaces a saved place WITHOUT leaving the chat: cover image, the
+// recognisable pin pill, a category·neighbourhood subtitle, the user's
+// own one-line review if they wrote one, and a "View on map" CTA that
+// hands off to the full navigate-and-open-card flow. This is the
+// "keep the chat open, show me the place" affordance — tapping a chat
+// pin peeks here first; "View on map" is the deliberate jump out.
+
+struct ChatPlacePeekCard: View {
+    let place: Place
+    /// List colour identity for the pin pill — resolved the same way the
+    /// map renderer resolves it so the pill matches the on-map pin.
+    let listHint: String?
+    /// Fires when the user taps "View on map" — the parent performs the
+    /// heavy-haptic collapse-chrome + recenter + open-card navigation.
+    let onOpenMap: () -> Void
+
+    private var subtitle: String {
+        let cat = place.category.displayName
+        let hood = place.neighborhood.trimmingCharacters(in: .whitespaces)
+        return hood.isEmpty ? cat : "\(cat) · \(hood)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Cover image when the place carries one. Fixed height, fill
+            // + clip so portrait and landscape source images both read
+            // as a clean banner.
+            if let url = place.imageURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        Rectangle().fill(SomedayColors.grayLight)
+                    default:
+                        ZStack {
+                            Rectangle().fill(SomedayColors.grayLight)
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .frame(height: 116)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .cornerRadius(10)
+            }
+
+            // The pin pill the user recognises from the rest of chat.
+            SavedPlacePinPillView(
+                name: place.name,
+                idOrPrefix: place.id,
+                listHint: listHint
+            )
+
+            Text(subtitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(SomedayColors.grayMedium)
+
+            // The user's own note, if they wrote one — gives the peek a
+            // personal anchor ("you said: …") rather than generic copy.
+            if let review = place.review,
+               !review.comment.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text(review.comment)
+                    .font(.system(size: 13))
+                    .foregroundColor(SomedayColors.charcoal.opacity(0.85))
+                    .lineLimit(3)
+            }
+
+            Button(action: onOpenMap) {
+                HStack(spacing: 6) {
+                    Image(systemName: "map.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("View on map")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(SomedayColors.green)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(SomedayColors.lime.opacity(0.22), in: Capsule())
+                .overlay(Capsule().stroke(SomedayColors.green.opacity(0.4), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(SomedayColors.grayLight)
+        .cornerRadius(14)
+    }
+}
+
 /// Tappable link tinted in lime ("poison green") — the Someday CTA colour.
 private struct ChatLinkText: View {
     let name: String

@@ -111,13 +111,30 @@ struct ChatMessage: Identifiable, Equatable, Codable, Sendable {
     /// the result inside the chat thread instead of an inline panel.
     /// Excluded from the wire format — it's pure UI state.
     var attachedPlaceID: String? = nil
+    /// Which inline card an `attachedPlaceID` bubble renders:
+    ///   • `.availability` — booking platforms / "tonight?" check (the
+    ///      place-card "Availability" CTA).
+    ///   • `.peek` — a lightweight place preview (image + name +
+    ///      category + "View on map") used when the user taps a saved
+    ///      pin in chat or asks the bot about a place. Keeps the chat
+    ///      open instead of navigating away.
+    /// Ignored when `attachedPlaceID` is nil. Pure UI state — excluded
+    /// from the wire format.
+    var attachmentKind: ChatAttachmentKind = .availability
 
     enum CodingKeys: String, CodingKey { case role, content }
-    init(role: ChatRole, content: String, steps: [ChatStep] = [], attachedPlaceID: String? = nil) {
+    init(
+        role: ChatRole,
+        content: String,
+        steps: [ChatStep] = [],
+        attachedPlaceID: String? = nil,
+        attachmentKind: ChatAttachmentKind = .availability
+    ) {
         self.role = role
         self.content = content
         self.steps = steps
         self.attachedPlaceID = attachedPlaceID
+        self.attachmentKind = attachmentKind
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -126,7 +143,15 @@ struct ChatMessage: Identifiable, Equatable, Codable, Sendable {
         self.content = try c.decode(String.self, forKey: .content)
         self.steps = []
         self.attachedPlaceID = nil
+        self.attachmentKind = .availability
     }
+}
+
+/// Distinguishes the two inline cards a chat bubble can carry for an
+/// `attachedPlaceID`. See `ChatMessage.attachmentKind`.
+enum ChatAttachmentKind: String, Codable, Sendable {
+    case availability
+    case peek
 }
 
 /// One unit of visible work the assistant did while producing a message.

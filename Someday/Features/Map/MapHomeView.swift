@@ -470,12 +470,22 @@ struct MapHomeView: View {
             // suppress it.
             showWelcomeTiles = false
         }
-        // Seed a context marker so the user sees what the chat is bound
-        // to before they type. Idempotent — re-tapping "Ask about this"
-        // for the same pin doesn't stack duplicate markers.
-        let markerText = "What would you like to know about **\(place.name)**?"
-        if chat.messages.last?.content != markerText {
-            chat.messages.append(ChatMessage(role: .assistant, content: markerText))
+        // Seed a peek marker so the user sees the place (image +
+        // description) inline and knows what the chat is bound to before
+        // they type. Idempotent — re-tapping "Ask about this" for the
+        // same pin doesn't stack duplicate peeks.
+        let alreadyPeeking = chat.messages.last.map {
+            $0.attachmentKind == .peek && $0.attachedPlaceID == place.id
+        } ?? false
+        if !alreadyPeeking {
+            chat.messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    content: "Ask me anything about it.",
+                    attachedPlaceID: place.id,
+                    attachmentKind: .peek
+                )
+            )
         }
         chatInputFocused = true
     }
@@ -523,13 +533,13 @@ struct MapHomeView: View {
     private func perform(_ action: ChatAction) -> OpenURLAction.Result {
         switch action {
         case .openPlace(let id):
-            // Heavy single beat — the user is committing to a pin from
-            // chat, which is the moment of "I want to go look at THIS."
-            // Stronger than the .tap() the pin-on-map tap uses so the
-            // chat-pin path feels like a deliberate, weighty selection.
+            // Flow C — peek, don't navigate away. Tapping a saved pin in
+            // chat keeps the conversation open and surfaces the place as
+            // an inline preview card; "View on map" inside that card is
+            // the deliberate jump out. Heavy single beat so the commit
+            // still feels weighty.
             Haptics.heavy()
-            collapseChrome()
-            return vm.focusOnPlaceLink(id) ? .handled : .discarded
+            return peekPlaceInChat(id) ? .handled : .discarded
 
         case .suggest(let pin):
             // Same heavy beat as the saved-place chat-pin tap above —
@@ -621,6 +631,46 @@ struct MapHomeView: View {
             }
             vm.showSearch = false
         }
+    }
+
+    /// Flow C — surface a saved pin as an inline peek inside the chat
+    /// (keeping the conversation open) instead of navigating to it on the
+    /// map. Resolves the place from a full UUID or the 8-char prefix the
+    /// Edge Function compresses ids to. Appends a `.peek` attachment
+    /// bubble; dedupes so re-tapping the same pin doesn't stack copies.
+    /// Returns false (→ `.discarded`) when the id resolves to nothing.
+    @MainActor
+    private func peekPlaceInChat(_ idOrPrefix: String) -> Bool {
+        guard let place = vm.places.first(where: {
+            $0.id == idOrPrefix || $0.id.hasPrefix(idOrPrefix)
+        }) else { return false }
+
+        // If the most recent bubble is already a peek of this place,
+        // there's nothing to add — the user is looking at it.
+        let alreadyShowing = chat.messages.last.map {
+            $0.attachmentKind == .peek && $0.attachedPlaceID == place.id
+        } ?? false
+        if !alreadyShowing {
+            chat.messages.append(
+                ChatMessage(
+                    role: .assistant,
+                    content: "",
+                    attachedPlaceID: place.id,
+                    attachmentKind: .peek
+                )
+            )
+        }
+        return true
+    }
+
+    /// "View on map" inside a peek card — the deliberate jump out of the
+    /// chat. Collapses the chat chrome, recenters on the pin, and opens
+    /// its place card (the pre-Flow-C behaviour of a chat-pin tap).
+    @MainActor
+    private func openPeekOnMap(_ place: Place) {
+        Haptics.heavy()
+        collapseChrome()
+        _ = vm.focusOnPlaceLink(place.id)
     }
 
     /// Kicks off the gradient-orbit + opacity shimmer on the AI chat
@@ -1388,6 +1438,11 @@ struct MapHomeView: View {
                             onDiscoverAll: { pins in
                                 collapseChrome()
                                 vm.beginDiscoverAll(pins)
+                            },
+                            // "View on map" inside a peek card — the
+                            // deliberate jump out of the chat to the pin.
+                            onOpenPeekOnMap: { place in
+                                openPeekOnMap(place)
                             }
                         )
                         .id(msg.id)
@@ -2302,6 +2357,10 @@ private struct ChatBubbleView: View {
     /// reply that mentioned 2+ places. Receives the parsed
     /// `SuggestedPin`s in the order they appeared in the message.
     let onDiscoverAll: ([SuggestedPin]) -> Void
+    /// Fires when the user taps "View on map" inside a `.peek`
+    /// attachment — the parent does the heavy-haptic collapse + recenter
+    /// + open-card navigation.
+    let onOpenPeekOnMap: (Place) -> Void
 
     @State private var stepsExpanded: Bool
 
@@ -2310,13 +2369,15 @@ private struct ChatBubbleView: View {
         isStreaming: Bool,
         vm: MapViewModel,
         onCheckTonightForAttachment: @escaping (Place) -> Void,
-        onDiscoverAll: @escaping ([SuggestedPin]) -> Void
+        onDiscoverAll: @escaping ([SuggestedPin]) -> Void,
+        onOpenPeekOnMap: @escaping (Place) -> Void
     ) {
         self.msg = msg
         self.isStreaming = isStreaming
         self.vm = vm
         self.onCheckTonightForAttachment = onCheckTonightForAttachment
         self.onDiscoverAll = onDiscoverAll
+        self.onOpenPeekOnMap = onOpenPeekOnMap
         // Initial render is ALWAYS collapsed. While the stream is
         // live the bubble shows only the current step as a single
         // tappable row (expand on tap); once done it folds into a
@@ -2538,25 +2599,36 @@ private struct ChatBubbleView: View {
             // availability state and render the in-chat card.
             if let pid = msg.attachedPlaceID,
                let place = vm.places.first(where: { $0.id == pid }) {
-                ChatAvailabilityCardView(
-                    placeName: place.name,
-                    placeID: place.id,
-                    // Use the SAME resolution the map renderer uses
-                    // (own list → previewed friend list → any friend
-                    // list claiming the id) so the chat pin's colour
-                    // matches the pin you tapped on the map. Reading
-                    // only the user's own lists here meant a friend-
-                    // list pin would tint correctly on the map but
-                    // fall back to Someday primary in chat — visible
-                    // mismatch when you opened Availability.
-                    listHint: vm.displayedListName(for: place),
-                    state: vm.availabilityState(for: place.id),
-                    tonightCheck: vm.tonightCheck(for: place.id),
-                    isCheckingTonight: vm.isCheckingTonight(for: place.id),
-                    onAppearWithReady: {
-                        onCheckTonightForAttachment(place)
-                    }
-                )
+                switch msg.attachmentKind {
+                case .peek:
+                    // Flow C — keep-the-chat-open place preview. "View on
+                    // map" hands off to the full navigate flow.
+                    ChatPlacePeekCard(
+                        place: place,
+                        listHint: vm.displayedListName(for: place),
+                        onOpenMap: { onOpenPeekOnMap(place) }
+                    )
+                case .availability:
+                    ChatAvailabilityCardView(
+                        placeName: place.name,
+                        placeID: place.id,
+                        // Use the SAME resolution the map renderer uses
+                        // (own list → previewed friend list → any friend
+                        // list claiming the id) so the chat pin's colour
+                        // matches the pin you tapped on the map. Reading
+                        // only the user's own lists here meant a friend-
+                        // list pin would tint correctly on the map but
+                        // fall back to Someday primary in chat — visible
+                        // mismatch when you opened Availability.
+                        listHint: vm.displayedListName(for: place),
+                        state: vm.availabilityState(for: place.id),
+                        tonightCheck: vm.tonightCheck(for: place.id),
+                        isCheckingTonight: vm.isCheckingTonight(for: place.id),
+                        onAppearWithReady: {
+                            onCheckTonightForAttachment(place)
+                        }
+                    )
+                }
             }
         }
         .padding(.horizontal, 12)
