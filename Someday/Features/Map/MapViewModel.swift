@@ -656,6 +656,32 @@ final class MapViewModel {
         return true
     }
 
+    /// Quietly recenter the map on a saved place WITHOUT opening its card
+    /// or collapsing the chat. Used by the in-chat peek (Flow C): tapping a
+    /// pin in the conversation surfaces its inline tile AND moves the map
+    /// underneath to that spot (its saved pin is already on the map), so
+    /// pulling the chat down reveals the located pin. The center is nudged
+    /// south of the pin so it renders in the visible strip above the chat
+    /// panel rather than dead-center behind it.
+    @MainActor
+    func revealPlaceUnderChat(_ idOrPrefix: String) {
+        guard let place = places.first(where: { $0.id == idOrPrefix })
+                ?? places.first(where: { $0.id.hasPrefix(idOrPrefix) })
+        else { return }
+
+        let span = 0.012
+        let center = CLLocationCoordinate2D(
+            latitude: place.coordinate.latitude - span * 0.32,
+            longitude: place.coordinate.longitude
+        )
+        withAnimation(SomedayAnimations.inTileNav) {
+            region = MKCoordinateRegion(
+                center: center,
+                span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
+            )
+        }
+    }
+
     /// Recenter on a coordinate the AI suggested (a venue NOT on the
     /// user's map), DROP A PIN there, and show a transient hint
     /// banner with the venue name. The pin stays on the map until the

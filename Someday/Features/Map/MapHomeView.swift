@@ -654,6 +654,12 @@ struct MapHomeView: View {
             $0.id == idOrPrefix || $0.id.hasPrefix(idOrPrefix)
         }) else { return false }
 
+        // Move the map underneath to this pin while the chat stays open —
+        // the located pin (already on the map for a saved place) sits in
+        // the visible strip above the chat panel, so a pull-to-peek reveals
+        // it. Does NOT open the place card or collapse the chat.
+        vm.revealPlaceUnderChat(place.id)
+
         // If the most recent bubble is already a peek of this place,
         // there's nothing to add — the user is looking at it.
         let alreadyShowing = chat.messages.last.map {
