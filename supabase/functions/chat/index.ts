@@ -928,7 +928,15 @@ Skip the offer when:
   • You've already offered a list for this topic earlier in the conversation.
   • The user has said they don't want a list.
 
-Offer at most ONCE per topic. Don't be pushy. The offer should feel like a helpful side note, not a demand — usually one short sentence at the end of your reply, after you've already given them something useful (recommendations, an answer, etc.).${customBlock}`;
+Offer at most ONCE per topic. Don't be pushy. The offer should feel like a helpful side note, not a demand — usually one short sentence at the end of your reply, after you've already given them something useful (recommendations, an answer, etc.).
+
+FILE-IT OFFER — when the user is looking at ONE of their OWN saved places (it's the selected pin, or they just asked about a specific saved place by name) and it would naturally belong in a list, you may offer ONCE to file it. Format the offer as a tappable link that opens the multi-list membership editor for that pin:
+
+  "Want to [file it somewhere](someday://edit-membership?place=<UUID>)?"
+
+  • The \`<UUID>\` is the saved place's full id from the \`id=…\` prefix in the digest. This only works for SAVED places (someday://place pins) — never for a someday://suggest venue that isn't on their map yet.
+  • Tapping opens the Lists overlay in toggle mode (each list the pin is already in shows a coloured border; tap to add/remove). It does NOT create a list — it's for organising an EXISTING pin into EXISTING lists.
+  • Skip it if the place is already in a fitting list, if the user is just asking a quick fact, or if you've already offered for this pin. At most once per pin. Keep it to a short trailing sentence.${customBlock}`;
 }
 
 function renderFullPlace(p: PlaceDigest): string {
