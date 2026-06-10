@@ -391,14 +391,6 @@ struct ListPillView: View {
                     .foregroundColor(style.color)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule().fill(style.color.opacity(0.14))
-            )
-            .overlay(
-                Capsule().stroke(style.color.opacity(0.35), lineWidth: 0.5)
-            )
         }
         .buttonStyle(.plain)
     }
@@ -737,11 +729,6 @@ struct SuggestionPinPillView: View {
                     .foregroundColor(lime)
                     .lineLimit(1)
             }
-            .padding(.leading, 6)
-            .padding(.trailing, 8)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(lime.opacity(0.12)))
-            .overlay(Capsule().stroke(lime.opacity(0.35), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
@@ -790,11 +777,6 @@ struct SavedPlacePinPillView: View {
                     .foregroundColor(color)
                     .lineLimit(1)
             }
-            .padding(.leading, 6)
-            .padding(.trailing, 8)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
-            .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
