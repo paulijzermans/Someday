@@ -83,7 +83,7 @@ struct PlaceCardSheet: View {
                 HStack(alignment: .top, spacing: 14) {
                     heroImage
                         .frame(width: 96, height: 96)
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .photoTileEdge(cornerRadius: 18)
                         .overlay(alignment: .bottomLeading) {
                             sourceBadge
                                 .padding(5)

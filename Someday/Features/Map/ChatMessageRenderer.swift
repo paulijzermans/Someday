@@ -1167,7 +1167,10 @@ struct ChatPlacePeekCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The hero wears the app-wide photo-tile edge: a thin white frame
+            // + hairline between the photo and the card, matching the map pins.
             hero
+                .photoTileEdge(cornerRadius: 18)
             footer
         }
         .background(Color.white)

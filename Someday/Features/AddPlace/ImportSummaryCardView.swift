@@ -128,7 +128,7 @@ struct ImportSummaryCardView: View {
             tilePhoto(for: place)
                 .frame(maxWidth: .infinity)
                 .frame(height: 160)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .photoTileEdge(cornerRadius: 16)
                 .overlay(alignment: .bottomLeading) {
                     sourceBadge(for: place).padding(8)
                 }

@@ -70,6 +70,39 @@ enum TileSize {
     }
 }
 
+// MARK: - Photo-tile edge
+
+extension View {
+    /// Someday's signature "photo tile" edge — the thin white frame + faint
+    /// hairline that wraps every map pin's image (`ClusteredMapView`'s pin
+    /// renderer). Apply it to ANY image that sits inside a tile or card so all
+    /// imagery across the app reads as one consistent family: a small white
+    /// edge between the photo and whatever surrounds it.
+    ///
+    /// The view it's attached to is clipped to the INNER rounded rect; a
+    /// `edge`-thick white margin and a 0.5pt black hairline frame it. Mirrors
+    /// the pin's geometry (white silhouette + inner-clipped photo + 0.10 black
+    /// hairline), just scaled up for card-sized imagery.
+    ///
+    /// - Parameters:
+    ///   - cornerRadius: the OUTER corner radius (matches the surface's radius).
+    ///   - edge: white frame thickness. Keep it small (~3pt) so it reads as a
+    ///           hairline frame, not a border.
+    func photoTileEdge(cornerRadius: CGFloat = 16, edge: CGFloat = 3) -> some View {
+        self
+            .clipShape(RoundedRectangle(cornerRadius: max(cornerRadius - edge, 0), style: .continuous))
+            .padding(edge)
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+            )
+    }
+}
+
 // MARK: - Floating-tile modifier
 
 extension View {
