@@ -20,10 +20,10 @@ AI chat — and browsing them on a beautiful clustered map.
 - **Repo**: `git@github.com:paulijzermans/Someday.git`, working branch `main`.
 - **Two extra components in-repo**: `supabase/` (schema, migrations, Edge Functions) and `extractor-erik/` (a vendored Python/Flask video-extraction service deployed on Railway — "Pipeline 2").
 
-> ⚠️ **`SOMEDAY-MODEL.md` is an old product doc.** It still says Firebase, iOS 17,
-> turquoise branding, and "AI recommendations out of scope." All four are wrong
-> now (Supabase, iOS 26, blue+lime branding, AI chat is a core feature). Trust
-> the code and this file over `SOMEDAY-MODEL.md`. `README.md` is current.
+> Historical note: an earlier `SOMEDAY-MODEL.md` product doc described a Firebase /
+> iOS 17 / turquoise / "no-AI" version of the app and was removed once it had
+> drifted entirely from reality. This file plus `README.md` are the current
+> source of truth — trust the code over any older doc you find.
 
 ---
 
@@ -130,7 +130,7 @@ goes through it.
 
 ## 5. Theme & design language
 
-- **Brand palette is blue + lime, NOT turquoise** (despite `SOMEDAY-MODEL.md`). Source of truth is `SomedayColors.swift`:
+- **Brand palette is blue + lime, NOT turquoise** (older docs say turquoise — wrong). Source of truth is `SomedayColors.swift`:
   - `primary` = blue `#4272FF`; accents cyan `#42EAFF`, amber `#FFB343`, coral `#FF7E42`.
   - **`lime` `#D4F061`** is the signature accent — the dominant CTA color (Send, Add, Import) and the "added/verified" status indicator. Pairs with **charcoal** text (too bright for white).
   - Many **backward-compatible aliases** exist (`green`→blue, `butter`→cyan, `accentGreen`→lime). Prefer semantic names (`primary`, `lime`, `charcoal`) in new code; don't add more aliases.
