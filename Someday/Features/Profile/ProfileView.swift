@@ -28,6 +28,9 @@ struct ProfileView: View {
 
     private enum Sheet: String, Identifiable {
         case account, notifications, privacy, plan, ai
+        #if DEBUG
+        case developer
+        #endif
         var id: String { rawValue }
     }
 
@@ -82,6 +85,9 @@ struct ProfileView: View {
                 case .privacy:       PrivacyView(appState: appState)
                 case .plan:          PlanView()
                 case .ai:            AIAssistantSettingsView()
+                #if DEBUG
+                case .developer:     DeveloperSettingsView()
+                #endif
                 }
             }
         }
@@ -384,6 +390,12 @@ struct ProfileView: View {
                 presentedSheet = .ai
             }
             Divider().padding(.leading, 58)
+            #if DEBUG
+            settingsRow(icon: "hammer.fill", title: "Developer") {
+                presentedSheet = .developer
+            }
+            Divider().padding(.leading, 58)
+            #endif
             settingsRow(icon: "arrow.right.square", title: "Sign out", isDestructive: true) {
                 onSignOut()
             }
@@ -473,3 +485,97 @@ struct ProfileView: View {
         }
     }
 }
+
+#if DEBUG
+// =============================================================================
+// DeveloperSettingsView — internal knobs, never shipped to production users
+// =============================================================================
+//
+// Lives behind Profile → "Developer" and is compiled only in DEBUG builds.
+// The one switch that matters here is the **extraction pipeline** toggle:
+// flip between our Supabase Edge Functions (Pipeline 1) and Erik's Railway
+// video extractor (Pipeline 2). The selector is read lazily by
+// `ExtractionRouter` on every import, so the change takes effect on the very
+// next link the user pastes — no app restart.
+//
+// We mirror `ExtractionPipelineSelector.current` into local `@State` so the
+// SwiftUI Picker has something observable to bind to, then write back on
+// change. The footer surfaces whether `Secrets.plist` actually has the
+// Pipeline 2 credentials — if not, the router silently falls back to
+// Pipeline 1 and the picker would otherwise lie about what's running.
+
+struct DeveloperSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var pipeline: ExtractionPipeline = ExtractionPipelineSelector.current
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                pipelineSection
+            }
+            .scrollContentBackground(.hidden)
+            .background(SomedayColors.grayLight)
+            .navigationTitle("Developer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(SomedayColors.charcoal)
+                            .frame(width: 32, height: 32)
+                            .background(.white)
+                            .clipShape(Circle())
+                    }
+                }
+            }
+        }
+    }
+
+    private var pipelineSection: some View {
+        Section {
+            Picker("Pipeline", selection: $pipeline) {
+                Text("Ours (Edge Functions)").tag(ExtractionPipeline.pipeline1)
+                Text("Erik's (Railway)").tag(ExtractionPipeline.pipeline2)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: pipeline) { _, newValue in
+                ExtractionPipelineSelector.current = newValue
+                Haptics.tap()
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: pipeline2Ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundColor(pipeline2Ready ? SomedayColors.accentGreen : SomedayColors.amber)
+                Text(statusBlurb)
+                    .font(.system(size: 12))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            Text("Link extraction pipeline")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(SomedayColors.grayMedium)
+                .textCase(.uppercase)
+        } footer: {
+            Text("Switches which backend turns a pasted Reel/TikTok link into pins. Google Maps links always use ours. Takes effect on the next import — no restart.")
+                .font(.system(size: 12))
+                .foregroundColor(SomedayColors.grayMedium)
+        }
+    }
+
+    private var pipeline2Ready: Bool { ExtractorConfig.isConfigured }
+
+    private var statusBlurb: String {
+        switch pipeline {
+        case .pipeline1:
+            return "Ours: Supabase Edge Functions + on-device geocoding."
+        case .pipeline2:
+            return pipeline2Ready
+                ? "Erik's extractor is configured and active."
+                : "Erik's extractor isn't configured (Secrets.plist) — imports fall back to ours."
+        }
+    }
+}
+#endif
