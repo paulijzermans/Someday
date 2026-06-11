@@ -70,36 +70,51 @@ enum TileSize {
     }
 }
 
-// MARK: - Photo-tile edge
+// MARK: - The defined thin edge
+
+extension Color {
+    /// Someday's single source of truth for the "defined thin line" that
+    /// frames every image box and every image-bearing card across the app.
+    /// A light, clearly-visible gray outline — the modern, crisp edge that
+    /// replaces the old heavier borders / white photo frames. Reference this
+    /// instead of hand-rolling a one-off `Color.black.opacity(...)` so the
+    /// whole app's edge treatment stays in lockstep.
+    static let somedayEdge = Color(.systemGray4)
+}
 
 extension View {
-    /// Someday's signature "photo tile" edge — the thin white frame + faint
-    /// hairline that wraps every map pin's image (`ClusteredMapView`'s pin
-    /// renderer). Apply it to ANY image that sits inside a tile or card so all
-    /// imagery across the app reads as one consistent family: a small white
-    /// edge between the photo and whatever surrounds it.
+    /// Someday's signature image-box edge — a clean ~1pt light-gray outline
+    /// hugging the photo's rounded rectangle. Apply it to ANY image (or image
+    /// placeholder) that sits inside a tile or card so all imagery across the
+    /// app reads as one modern, consistent family: a thin defined line between
+    /// the photo and whatever surrounds it.
     ///
-    /// The view it's attached to is clipped to the INNER rounded rect; a
-    /// `edge`-thick white margin and a 0.5pt black hairline frame it. Mirrors
-    /// the pin's geometry (white silhouette + inner-clipped photo + 0.10 black
-    /// hairline), just scaled up for card-sized imagery.
+    /// The view is clipped to the rounded rect, then a `lineWidth`-thick
+    /// `somedayEdge` border is stroked on top. No white inset frame — the edge
+    /// IS the line, so a photo sits flush inside its outline.
     ///
     /// - Parameters:
-    ///   - cornerRadius: the OUTER corner radius (matches the surface's radius).
-    ///   - edge: white frame thickness. Keep it small (~3pt) so it reads as a
-    ///           hairline frame, not a border.
-    func photoTileEdge(cornerRadius: CGFloat = 16, edge: CGFloat = 3) -> some View {
+    ///   - cornerRadius: the corner radius (matches the surface's radius).
+    ///   - lineWidth: edge thickness. ~1pt reads as a defined-but-light line.
+    func photoTileEdge(cornerRadius: CGFloat = 16, lineWidth: CGFloat = 1) -> some View {
         self
-            .clipShape(RoundedRectangle(cornerRadius: max(cornerRadius - edge, 0), style: .continuous))
-            .padding(edge)
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(.white)
-            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.10), lineWidth: 0.5)
+                    .strokeBorder(Color.somedayEdge, lineWidth: lineWidth)
             )
+    }
+
+    /// The card / tile counterpart of `photoTileEdge`: wraps an image-bearing
+    /// design element in the same defined thin `somedayEdge` outline so the
+    /// whole surface and the photo inside it share one modern edge language.
+    /// Use on the OUTER card surface (the one that already clips its content
+    /// to `cornerRadius`).
+    func somedayCardEdge(cornerRadius: CGFloat, lineWidth: CGFloat = 1) -> some View {
+        self.overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.somedayEdge, lineWidth: lineWidth)
+        )
     }
 }
 

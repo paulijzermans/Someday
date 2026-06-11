@@ -168,10 +168,10 @@ struct PlaceCardSheet: View {
             // glass blur tile_bottom uses for its empty state.
             .background(.white)
             .cornerRadius(16)
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(SomedayColors.primary.opacity(0.18), lineWidth: 1)
-            )
+            // The card wears the same defined thin edge as the hero photo
+            // inside it — one modern outline language across the whole
+            // image-bearing surface.
+            .somedayCardEdge(cornerRadius: 16)
             .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
             .offset(y: max(dragOffset, 0))
             .gesture(

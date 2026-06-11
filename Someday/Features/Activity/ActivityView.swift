@@ -533,6 +533,9 @@ private struct VisitedTile: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        // Defined thin edge — the modern crisp outline shared by the
+        // list tiles and cards across the app.
+        .somedayCardEdge(cornerRadius: 18)
     }
 
     private func formatRating(_ value: Double) -> String {
@@ -584,6 +587,7 @@ private struct FollowTile: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .somedayCardEdge(cornerRadius: 16)
     }
 }
 
@@ -642,6 +646,7 @@ private struct SharedListTile: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .somedayCardEdge(cornerRadius: 18)
     }
 }
 
@@ -709,6 +714,7 @@ struct PersonProfileView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 22)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .somedayCardEdge(cornerRadius: 22)
     }
 
     private var subscribeButton: some View {
@@ -783,6 +789,7 @@ struct PersonProfileView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .somedayCardEdge(cornerRadius: 18)
     }
 
     private var emptyState: some View {
@@ -897,6 +904,7 @@ private struct FriendRequestTile: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .somedayCardEdge(cornerRadius: 16)
     }
 
     /// Avatar tile — reuses the same async-image + initials fallback the

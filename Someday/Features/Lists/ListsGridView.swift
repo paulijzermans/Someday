@@ -426,6 +426,9 @@ struct FriendListGridTile: View {
             // tile container itself and by the chat bubbles, so the
             // whole UI reads as one glass surface.
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            // Defined thin edge so shared-list tiles match the modern
+            // outline of the own-list tiles beside them.
+            .somedayCardEdge(cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }
@@ -441,6 +444,7 @@ struct FriendListGridTile: View {
                     .font(.system(size: 30, weight: .semibold))
                     .foregroundStyle(style.color)
             )
+            .photoTileEdge(cornerRadius: 18)
     }
 
     /// Small (24pt) avatar chip with a thin white ring — fits inside
@@ -532,6 +536,10 @@ struct ListTile: View {
             // tile container itself and by the chat bubbles, so the
             // whole UI reads as one glass surface.
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            // Defined thin edge so the whole tile reads as one crisp,
+            // modern element — same outline language as the icon face
+            // inside it and the cards elsewhere in the app.
+            .somedayCardEdge(cornerRadius: 20)
             // Membership-edit highlight. When this tile represents a
             // list the active pin already belongs to, draw a thick
             // border in the list's own colour so the user can see at a
@@ -619,7 +627,9 @@ struct ListTile: View {
                         startPoint: .center, endPoint: .bottom
                     )
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 18))
+                // Defined thin edge around the icon face — same modern
+                // outline language as the photo boxes across the app.
+                .photoTileEdge(cornerRadius: 18)
         } else {
             RoundedRectangle(cornerRadius: 18)
                 .fill(style.color.opacity(0.16))
@@ -629,6 +639,7 @@ struct ListTile: View {
                         .font(.system(size: 36, weight: .semibold))
                         .foregroundStyle(style.color)
                 )
+                .photoTileEdge(cornerRadius: 18)
         }
     }
 }
@@ -693,6 +704,9 @@ private struct AddListTile: View {
             .padding(10)
             .frame(maxWidth: .infinity)
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            // Defined thin edge so the add tile matches the modern
+            // outline of the list tiles beside it.
+            .somedayCardEdge(cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }
