@@ -29,6 +29,11 @@ struct ImportSummaryCardView: View {
     /// so the two surfaces share one gesture vocabulary: swipe up → snap
     /// to a large tile with a selection haptic, swipe down → collapse.
     @State private var expanded: Bool = false
+    /// Live finger-tracking offset for the expand / collapse swipe. The
+    /// whole results tile (hero image and all) rides this offset during the
+    /// drag so it moves *with* the gesture instead of sitting pinned until
+    /// release; it springs back to 0 once the swipe settles.
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         // Results get the roomier `.half` tile so the slideshow cards have
@@ -111,6 +116,9 @@ struct ImportSummaryCardView: View {
             doneButton
         }
         .padding(18)
+        // The whole tile rides the live drag offset so the image and chrome
+        // track the finger as one unit, then spring to the snapped position.
+        .offset(y: dragOffset)
         .onChange(of: currentIndex) { _, _ in Haptics.tap() }
         .onAppear(perform: announceArrival)
         // Vertical swipes expand / collapse the tile; `simultaneousGesture`
@@ -132,19 +140,46 @@ struct ImportSummaryCardView: View {
     /// collapse back to the half tile. Only predominantly-vertical drags
     /// count, so paging between places (horizontal) is unaffected.
     private var expandDragGesture: some Gesture {
-        DragGesture(minimumDistance: 16)
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                // Ignore predominantly-horizontal drags — those are the
+                // TabView paging between places.
+                guard abs(dy) > abs(dx) else { return }
+                // Track the finger only in the actionable direction (lift
+                // up when collapsed, settle down when expanded) with a soft
+                // rubber-band so the tile moves with the swipe but resists
+                // running away off-screen.
+                let resisted = rubberBand(dy)
+                dragOffset = expanded ? max(0, resisted) : min(0, resisted)
+            }
             .onEnded { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
-                guard abs(dy) > abs(dx) else { return }
+                guard abs(dy) > abs(dx) else {
+                    withAnimation(SomedayAnimations.followCTA) { dragOffset = 0 }
+                    return
+                }
                 if dy < -40 && !expanded {
                     Haptics.select()
-                    withAnimation(SomedayAnimations.followCTA) { expanded = true }
+                    withAnimation(SomedayAnimations.followCTA) { expanded = true; dragOffset = 0 }
                 } else if dy > 40 && expanded {
                     Haptics.select()
-                    withAnimation(SomedayAnimations.followCTA) { expanded = false }
+                    withAnimation(SomedayAnimations.followCTA) { expanded = false; dragOffset = 0 }
+                } else {
+                    withAnimation(SomedayAnimations.followCTA) { dragOffset = 0 }
                 }
             }
+    }
+
+    /// Soft resistance curve for the live drag offset — the tile follows the
+    /// finger 1:1 at first, then increasingly lags so a long swipe never
+    /// drags the whole card off the scrim. Sign-preserving.
+    private func rubberBand(_ d: CGFloat) -> CGFloat {
+        let limit: CGFloat = 90
+        let resisted = limit * (1 - CGFloat(exp(-Double(abs(d)) / Double(limit))))
+        return d < 0 ? -resisted : resisted
     }
 
     /// One success haptic the first time the results land. (The old
