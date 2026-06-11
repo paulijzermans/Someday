@@ -230,48 +230,34 @@ struct PlaceCardSheet: View {
     }
 
     /// Hero photo at the top of the card. Uses the imported `imageURL`
-    /// when present (Instagram / TikTok / Maps imports carry their own
-    /// photo); otherwise drops to a category-keyed stock photo so mock
-    /// + manually-typed places still get a real image instead of the
-    /// flat brand gradient. The brand-gradient fallback only kicks in
-    /// if even the stock photo lookup fails (offline, etc.).
+    /// when the place actually carries one (Instagram / TikTok / Maps
+    /// imports ship their own photo); otherwise we show the brand-gradient
+    /// + category glyph fallback. We no longer fabricate a category stock
+    /// photo for photo-less places — a manually-typed or AI-saved place
+    /// shows its category icon, not a stand-in restaurant/latte image that
+    /// isn't really this place.
     @ViewBuilder
     private var heroImage: some View {
-        AsyncImage(url: place.imageURL ?? Self.categoryFallbackImageURL(place.category)) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty:
-                // Translucent placeholder while the AsyncImage is
-                // mid-fetch. Keeps the card from popping in too
-                // aggressively when the photo finally lands.
-                LinearGradient(
-                    colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            default:
-                fallbackGradient
+        if let url = place.imageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
+                    // Translucent placeholder while the AsyncImage is
+                    // mid-fetch. Keeps the card from popping in too
+                    // aggressively when the photo finally lands.
+                    LinearGradient(
+                        colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                default:
+                    fallbackGradient
+                }
             }
+        } else {
+            fallbackGradient
         }
-    }
-
-    /// Curated Unsplash photo per category. Public CDN URLs, stable
-    /// photo IDs, so a tap on a `.food` pin always shows a restaurant
-    /// table, a `.coffee` pin always shows a latte, etc. We pin width
-    /// + crop so AsyncImage caches a small file (~25 kB) per category
-    /// instead of pulling a 2 MB original. Swap these for real Google
-    /// Places photos when the lookup is wired up.
-    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
-        let photoID: String
-        switch category {
-        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
-        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
-        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
-        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
-        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
-        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
-        }
-        return URL(string: "https://images.unsplash.com/\(photoID)?w=400&h=400&fit=crop&q=80")
     }
 
     private var fallbackGradient: some View {

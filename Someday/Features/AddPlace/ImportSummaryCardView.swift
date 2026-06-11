@@ -456,44 +456,38 @@ struct ImportSummaryCardView: View {
         }
     }
 
-    /// The photo that fills the hero. Falls back to the category image,
-    /// then to a tinted panel with the category glyph if the network image
-    /// hasn't arrived (or fails) — so the card is never blank.
+    /// The photo that fills the hero. Uses the imported `imageURL` when the
+    /// place carries one; otherwise shows a tinted panel with the category
+    /// glyph — so a photo-less place reads as its category rather than a
+    /// fabricated stock photo. We skip `AsyncImage` entirely when there's
+    /// no real URL (a nil-URL `AsyncImage` would spin forever on `.empty`).
     @ViewBuilder
     private func tilePhoto(for place: Place) -> some View {
-        let url = place.imageURL ?? Self.categoryFallbackImageURL(place.category)
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty:
-                categoryColor(for: place.category).opacity(0.16)
-            default:
-                ZStack {
+        if let url = place.imageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
                     categoryColor(for: place.category).opacity(0.16)
-                    Image(systemName: place.category.icon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(categoryColor(for: place.category))
+                default:
+                    categoryGlyphPanel(for: place.category)
                 }
             }
+        } else {
+            categoryGlyphPanel(for: place.category)
         }
     }
 
-    /// Curated per-category fallback photo — kept in sync with
-    /// `PlaceCardSheet` and the map pins so the same place shows the same
-    /// imagery everywhere. Pinned to a small crop so AsyncImage caches a
-    /// tiny file per category.
-    private static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
-        let photoID: String
-        switch category {
-        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
-        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
-        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
-        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
-        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
-        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
+    /// Tinted panel with the category glyph — the fallback for any place
+    /// without a real photo (or whose photo fails to load).
+    private func categoryGlyphPanel(for category: PlaceCategory) -> some View {
+        ZStack {
+            categoryColor(for: category).opacity(0.16)
+            Image(systemName: category.icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(categoryColor(for: category))
         }
-        return URL(string: "https://images.unsplash.com/\(photoID)?w=200&h=200&fit=crop&q=80")
     }
 
     // MARK: - Helpers

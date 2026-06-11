@@ -423,10 +423,11 @@ class PlacePinAnnotationView: MKAnnotationView {
         let gen = loadGeneration
 
         // Photo source mirrors PlaceCardSheet: the imported `imageURL` when
-        // the place has one (Google Maps photo, Reel cover), otherwise a
-        // category-keyed stock photo so every pin shows imagery — same as
-        // the card the user taps through to.
-        let photoURL = place.imageURL ?? Self.categoryFallbackImageURL(place.category)
+        // the place has one (Google Maps photo, Reel cover). Photo-less
+        // places render the category-coloured tile + glyph (handled by
+        // `renderTile` when `photo` is nil) rather than a stand-in stock
+        // photo — same as the card the user taps through to.
+        let photoURL = place.imageURL
 
         // Draw the tile immediately. If we already have the photo cached,
         // use it; otherwise show the category placeholder and fetch.
@@ -459,22 +460,6 @@ class PlacePinAnnotationView: MKAnnotationView {
         c.countLimit = 300
         return c
     }()
-
-    /// Same curated Unsplash stock photo per category that PlaceCardSheet
-    /// uses, but requested at pin size (small crop → ~tens of kB). Keeps a
-    /// pin's photo consistent with the card you tap through to.
-    fileprivate static func categoryFallbackImageURL(_ category: PlaceCategory) -> URL? {
-        let photoID: String
-        switch category {
-        case .food:     photoID = "photo-1414235077428-338989a2e8c0"
-        case .drinks:   photoID = "photo-1551024601-bec78aea704b"
-        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085"
-        case .activity: photoID = "photo-1441974231531-c6227db76b6e"
-        case .art:      photoID = "photo-1531058020387-3be344556be6"
-        case .travel:   photoID = "photo-1488646953014-85cb44e25828"
-        }
-        return URL(string: "https://images.unsplash.com/\(photoID)?w=160&h=160&fit=crop&q=80")
-    }
 
     /// Download + downsample a place photo to a pin-sized thumbnail. Result
     /// is cached so subsequent pins for the same URL are instant.
@@ -698,35 +683,15 @@ class SuggestionPinAnnotationView: MKAnnotationView {
         layer.shadowRadius = 3
         layer.shadowOffset = CGSize(width: 0, height: 1.5)
 
-        // Resolve the AI's free-form category string to our enum so we can
-        // pick the same category-keyed stock photo a saved pin would use.
+        // Resolve the AI's free-form category string to our enum so the
+        // photo-less tile shows the right glyph.
         let category = sa.category
             .flatMap { PlaceCategory(rawValue: $0.lowercased()) } ?? .food
 
-        loadGeneration &+= 1
-        let gen = loadGeneration
-
-        // Suggestions never carry their own image, so always fall back to
-        // the category stock photo — same source PlaceCardSheet / saved
-        // pins use, so the photo-tile reads consistently.
-        let photoURL = PlacePinAnnotationView.categoryFallbackImageURL(category)
-        let cached = photoURL.flatMap {
-            PlacePinAnnotationView.imageCache.object(forKey: $0 as NSURL)
-        }
-        apply(Self.renderTile(category: category, photo: cached))
-
-        if cached == nil, let url = photoURL {
-            Task { [weak self] in
-                guard let img = await PlacePinAnnotationView.loadThumbnail(url) else { return }
-                await MainActor.run {
-                    guard let self,
-                          self.loadGeneration == gen,
-                          (self.annotation as? SuggestionAnnotation)?.suggestionID == sa.suggestionID
-                    else { return }
-                    self.apply(Self.renderTile(category: category, photo: img))
-                }
-            }
-        }
+        // AI suggestions never carry a real photo, so render the lime
+        // category-glyph tile directly. We no longer fabricate a category
+        // stock photo — the pin shows its category icon instead.
+        apply(Self.renderTile(category: category, photo: nil))
     }
 
     private func apply(_ result: (UIImage, CGPoint)) {

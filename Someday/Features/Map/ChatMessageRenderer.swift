@@ -1147,24 +1147,6 @@ struct ChatPlacePeekCard: View {
         return ListVisualStyle.style(for: l).color
     }
 
-    /// Cover photo. Prefer the place's own imported image; otherwise fall
-    /// back to the same category-keyed stock imagery the AI-suggestion
-    /// tile uses, so a peek of a photo-less pin still reads as a card
-    /// rather than an empty grey banner.
-    private var heroURL: URL? {
-        if let url = place.imageURL { return url }
-        let photoID: String
-        switch place.category {
-        case .food:     photoID = "photo-1414235077428-338989a2e8c0"
-        case .drinks:   photoID = "photo-1551024601-bec78aea704b"
-        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085"
-        case .activity: photoID = "photo-1441974231531-c6227db76b6e"
-        case .art:      photoID = "photo-1531058020387-3be344556be6"
-        case .travel:   photoID = "photo-1488646953014-85cb44e25828"
-        }
-        return URL(string: "https://images.unsplash.com/\(photoID)?w=600&h=400&fit=crop&q=80")
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             // The hero wears the app-wide photo-tile edge: a defined thin
@@ -1302,31 +1284,44 @@ struct ChatPlacePeekCard: View {
         .padding(14)
     }
 
-    /// Cover photo with a translucent placeholder while loading and a
-    /// brand-gradient fallback (category glyph) if the fetch fails.
+    /// Cover photo. Uses the place's own imported image when it has one,
+    /// with a translucent placeholder while loading and a brand-gradient +
+    /// category-glyph fallback if the fetch fails. Photo-less pins skip the
+    /// network fetch entirely and show the glyph fallback directly — we no
+    /// longer fabricate a category stock photo.
     @ViewBuilder
     private var heroImage: some View {
-        AsyncImage(url: heroURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty:
-                ZStack {
-                    Rectangle().fill(SomedayColors.grayLight)
-                    ProgressView().controlSize(.small)
+        if let url = place.imageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
+                    ZStack {
+                        Rectangle().fill(SomedayColors.grayLight)
+                        ProgressView().controlSize(.small)
+                    }
+                default:
+                    fallbackHero
                 }
-            default:
-                LinearGradient(
-                    colors: [SomedayColors.primary, SomedayColors.primaryDark],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .overlay(
-                    Image(systemName: place.category.icon)
-                        .font(.system(size: 40, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.4))
-                )
             }
+        } else {
+            fallbackHero
         }
+    }
+
+    /// Brand-gradient panel with the category glyph, shown for any pin
+    /// without a real photo (or when its photo fails to load).
+    private var fallbackHero: some View {
+        LinearGradient(
+            colors: [SomedayColors.primary, SomedayColors.primaryDark],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+        .overlay(
+            Image(systemName: place.category.icon)
+                .font(.system(size: 40, weight: .semibold))
+                .foregroundColor(.white.opacity(0.4))
+        )
     }
 }
 

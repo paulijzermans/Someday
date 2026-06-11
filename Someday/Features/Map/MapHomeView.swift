@@ -3344,24 +3344,6 @@ private struct DiscoverAllPage: View {
         pin.category.flatMap { PlaceCategory(rawValue: $0.lowercased()) }
     }
 
-    /// Category-keyed stock photo, mirroring `PlaceCardSheet`'s hero
-    /// fallback so a suggestion tile and a saved-place tile of the same
-    /// category show the same family of imagery. Pinned width + crop so
-    /// AsyncImage caches a small file per category.
-    private var imageURL: URL? {
-        let photoID: String
-        switch category {
-        case .food:     photoID = "photo-1414235077428-338989a2e8c0" // restaurant
-        case .drinks:   photoID = "photo-1551024601-bec78aea704b"    // cocktail
-        case .coffee:   photoID = "photo-1495474472287-4d71bcdd2085" // latte
-        case .activity: photoID = "photo-1441974231531-c6227db76b6e" // trail
-        case .art:      photoID = "photo-1531058020387-3be344556be6" // gallery
-        case .travel:   photoID = "photo-1488646953014-85cb44e25828" // travel
-        case nil:       photoID = "photo-1414235077428-338989a2e8c0" // default
-        }
-        return URL(string: "https://images.unsplash.com/\(photoID)?w=400&h=400&fit=crop&q=80")
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             heroImage
@@ -3413,31 +3395,20 @@ private struct DiscoverAllPage: View {
         .padding(.vertical, 6)
     }
 
-    /// Category stock photo with a graceful translucent placeholder
-    /// while it loads and a brand-gradient fallback if the fetch fails.
+    /// AI suggestions carry no real photo, so the hero is the brand-gradient
+    /// panel with the category glyph (or a sparkle when the category is
+    /// unknown) — we no longer fabricate a category stock photo.
     @ViewBuilder
     private var heroImage: some View {
-        AsyncImage(url: imageURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty:
-                LinearGradient(
-                    colors: [SomedayColors.primary.opacity(0.4), SomedayColors.primaryDark.opacity(0.4)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            default:
-                LinearGradient(
-                    colors: [SomedayColors.primary, SomedayColors.primaryDark],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .overlay(
-                    Image(systemName: category?.icon ?? "sparkles")
-                        .font(.system(size: 40, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.4))
-                )
-            }
-        }
+        LinearGradient(
+            colors: [SomedayColors.primary, SomedayColors.primaryDark],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+        .overlay(
+            Image(systemName: category?.icon ?? "sparkles")
+                .font(.system(size: 40, weight: .semibold))
+                .foregroundColor(.white.opacity(0.4))
+        )
     }
 }
 
