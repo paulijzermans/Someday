@@ -34,6 +34,14 @@ struct ImportSummaryCardView: View {
     /// drag so it moves *with* the gesture instead of sitting pinned until
     /// release; it springs back to 0 once the swipe settles.
     @State private var dragOffset: CGFloat = 0
+    /// Which slide the native paging `ScrollView` is centred on. We drive
+    /// the slideshow with a SwiftUI `ScrollView` rather than a `.page`
+    /// `TabView` because the UIKit-backed TabView won't reposition its
+    /// hosted content (the hero image) when the floating tile grows — the
+    /// image would stay pinned while the chrome animated around it. A native
+    /// pager keeps every slide under SwiftUI's layout animation, so the
+    /// image moves with the tile on expand / collapse.
+    @State private var scrolledID: Int? = 0
 
     var body: some View {
         // Results get the roomier `.half` tile so the slideshow cards have
@@ -98,15 +106,24 @@ struct ImportSummaryCardView: View {
             // Horizontal slideshow — one pin-style card per imported
             // place. Swipe right to page through everything that landed,
             // one at a time, instead of scanning a long stacked list.
-            TabView(selection: $currentIndex) {
-                ForEach(Array(summary.places.enumerated()), id: \.element.id) { index, place in
-                    importedPlaceCard(place, position: index)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 4)
-                        .tag(index)
+            // Native SwiftUI pager (not a `.page` TabView) so the cards —
+            // hero image included — animate with the tile when it expands.
+            GeometryReader { geo in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(Array(summary.places.enumerated()), id: \.element.id) { index, place in
+                            importedPlaceCard(place, position: index)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 4)
+                                .frame(width: geo.size.width)
+                                .id(index)
+                        }
+                    }
+                    .scrollTargetLayout()
                 }
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $scrolledID, anchor: .center)
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(maxHeight: .infinity)
 
             if summary.places.count > 1 {
@@ -119,7 +136,13 @@ struct ImportSummaryCardView: View {
         // The whole tile rides the live drag offset so the image and chrome
         // track the finger as one unit, then spring to the snapped position.
         .offset(y: dragOffset)
-        .onChange(of: currentIndex) { _, _ in Haptics.tap() }
+        // Keep the page counter + paging haptic in sync with the scroll
+        // position (the native pager reports through `scrolledID`).
+        .onChange(of: scrolledID) { _, newValue in
+            guard let i = newValue, i != currentIndex else { return }
+            currentIndex = i
+            Haptics.tap()
+        }
         .onAppear(perform: announceArrival)
         // Vertical swipes expand / collapse the tile; `simultaneousGesture`
         // lets the horizontal `TabView` keep paging untouched (we ignore
@@ -206,7 +229,9 @@ struct ImportSummaryCardView: View {
             // the source badge bottom-left and an "added" check top-right.
             tilePhoto(for: place)
                 .frame(maxWidth: .infinity)
-                .frame(height: 160)
+                // Hero grows when the tile expands so the image is visibly
+                // part of the unfold rather than sitting at a fixed size.
+                .frame(height: expanded ? 220 : 160)
                 .photoTileEdge(cornerRadius: 16)
                 .overlay(alignment: .bottomLeading) {
                     sourceBadge(for: place).padding(8)
@@ -358,7 +383,7 @@ struct ImportSummaryCardView: View {
                     .frame(width: 7, height: 7)
                     .onTapGesture {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                            currentIndex = i
+                            scrolledID = i
                         }
                     }
             }
