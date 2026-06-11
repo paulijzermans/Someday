@@ -1493,25 +1493,11 @@ struct MapHomeView: View {
                     // search. Submitting (Return / Send) hands the
                     // question to the inline AI chat below.
                     .onSubmit { askChat() }
-                    // Keyboard accessory bar — gives the user an
-                    // unambiguous "dismiss keyboard" affordance for the
-                    // case where the transcript scroll isn't long
-                    // enough to drag down interactively. Pairs with the
-                    // `.scrollDismissesKeyboard(.interactively)` on
-                    // `scrollableTranscript` (swipe down on messages)
-                    // and the drag-down gesture on the panel below.
-                    .toolbar {
-                        ToolbarItemGroup(placement: .keyboard) {
-                            Spacer()
-                            Button {
-                                chatInputFocused = false
-                            } label: {
-                                Image(systemName: "keyboard.chevron.compact.down")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(SomedayColors.charcoal)
-                            }
-                        }
-                    }
+                    // No keyboard-accessory "dismiss" button: the user
+                    // dismisses by swiping down — either the drag-down
+                    // gesture on the whole AI bar (see `aiChatBar`) or
+                    // `.scrollDismissesKeyboard(.interactively)` on the
+                    // transcript (swipe down on messages).
             }
             .frame(maxHeight: 22)
             .clipped()
