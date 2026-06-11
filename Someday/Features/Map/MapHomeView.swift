@@ -1111,41 +1111,6 @@ struct MapHomeView: View {
         .animation(SomedayAnimations.tile, value: vm.showSearch)
     }
 
-    /// Profile tab for the bottom bar (far-right slot). The user's avatar,
-    /// Instagram-style, with a lime ring when the profile sheet is open and
-    /// a hairline edge otherwise so it reads as a tappable element. Replaces
-    /// the old floating top-right avatar.
-    private var profileTabButton: some View {
-        Button {} label: {
-            AsyncImage(url: appState.currentUser?.avatarURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    Circle().fill(SomedayColors.butter)
-                        .overlay(
-                            Text(appState.currentUser?.initials.prefix(1) ?? "?")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(SomedayColors.green)
-                        )
-                }
-            }
-            .frame(width: 30, height: 30)
-            .clipShape(Circle())
-            .overlay(
-                Circle().strokeBorder(
-                    vm.showProfile ? SomedayColors.lime : Color.somedayEdge,
-                    lineWidth: vm.showProfile ? 2 : 1
-                )
-            )
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .animation(SomedayAnimations.chipToggle, value: vm.showProfile)
-        }
-        .buttonStyle(PressDownButtonStyle(onPress: { vm.showProfile = true }))
-    }
-
     /// Round 38pt glass button under the profile avatar. Tap → walk
     /// the location permission ladder (request once on first use) and,
     /// when authorized, recenter the map on the user's current fix.
@@ -1777,9 +1742,16 @@ struct MapHomeView: View {
                     }
                 }
 
-                // 5) Profile — far right. The user's avatar, Instagram-style,
-                //    with a lime ring when the profile sheet is open.
-                profileTabButton
+                // 5) Profile — far right. A generic person glyph so it reads
+                //    as one of the icon family, matching Activity / Lists
+                //    rather than standing out as a photo avatar.
+                GlassTabIcon(
+                    icon: "person",
+                    activeIcon: "person.fill",
+                    isActive: vm.showProfile
+                ) {
+                    vm.showProfile = true
+                }
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
