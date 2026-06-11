@@ -329,6 +329,10 @@ Deno.serve(async (req) => {
                   id: stepID,
                   icon: stepIcon(block.name),
                   label: stepLabel(block),
+                  // Raw tool name — lets the eval harness assert which
+                  // tools fired and lets client-side analytics attribute
+                  // a step to a capability. iOS ignores unknown keys.
+                  tool: block.name,
                 });
               }
             } else if (event.type === "content_block_delta") {
@@ -379,10 +383,36 @@ Deno.serve(async (req) => {
           // mutation immediately (optimistic UI) while the model
           // continues thinking on the same turn.
           const settled = await Promise.all(
-            toolUseBlocks.map(async (tb) => ({
-              tb,
-              result: await executeClientTool(tb.name, tb.input, ctx),
-            })),
+            toolUseBlocks.map(async (tb) => {
+              // OBSERVE (AI_STRATEGY.md §4): one structured log line per
+              // tool call. Supabase captures console output in the
+              // function logs, so this is a zero-migration telemetry feed
+              // of "what the model tried, and whether it worked" — the raw
+              // material the flywheel summarizes into the next backlog.
+              // We log the input KEYS, not values, to avoid dumping user
+              // content (place names, queries) into logs.
+              const startedAt = Date.now();
+              try {
+                const result = await executeClientTool(tb.name, tb.input, ctx);
+                logToolCall({
+                  tool: tb.name,
+                  ok: true,
+                  ms: Date.now() - startedAt,
+                  mutated: !!result.mutation,
+                  inputKeys: Object.keys(tb.input ?? {}),
+                });
+                return { tb, result };
+              } catch (err) {
+                logToolCall({
+                  tool: tb.name,
+                  ok: false,
+                  ms: Date.now() - startedAt,
+                  error: String(err),
+                  inputKeys: Object.keys(tb.input ?? {}),
+                });
+                throw err; // preserve existing "a throw aborts the turn" semantics
+              }
+            }),
           );
           for (const { result } of settled) {
             if (result.mutation) send("mutation", result.mutation);
@@ -417,6 +447,30 @@ Deno.serve(async (req) => {
     },
   });
 });
+
+// ---------------------- telemetry (OBSERVE) ----------------------
+
+// One structured line per tool execution. Emitted to stdout, which
+// Supabase captures in the function logs — so we get a queryable feed of
+// "what the model tried, whether it worked, and how long it took" with
+// zero schema/migration. This is the OBSERVE stage of the improvement
+// flywheel (AI_STRATEGY.md §4): grep / export these to spot tools the
+// model reaches for, tools that fail, and capabilities users want that no
+// tool covers yet. Promote to a `tool_events` table later if we need
+// per-user attribution and SQL aggregation.
+interface ToolCallLog {
+  tool: string;
+  ok: boolean;
+  ms: number;
+  mutated?: boolean;
+  error?: string;
+  inputKeys?: string[];
+}
+
+function logToolCall(entry: ToolCallLog): void {
+  // Prefix lets us filter the log stream to just tool telemetry.
+  console.log(`tool_event ${JSON.stringify({ t: new Date().toISOString(), ...entry })}`);
+}
 
 // ---------------------- step labelling ----------------------
 

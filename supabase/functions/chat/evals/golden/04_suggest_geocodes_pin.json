@@ -1,0 +1,8 @@
+{
+  "name": "suggestion — proposing a new venue geocodes it and renders a suggest pin",
+  "prompt": "Suggest one great natural-wine bar near De Pijp I haven't saved yet.",
+  "expect": {
+    "toolsAnyOf": ["geocode_address"],
+    "textIncludesAnyOf": ["someday://suggest?"]
+  }
+}
