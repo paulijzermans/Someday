@@ -23,6 +23,12 @@ struct ImportSummaryCardView: View {
     /// Guards the one-shot "import landed" success haptic so SwiftUI
     /// re-renders don't re-fire it.
     @State private var didAnnounce: Bool = false
+    /// Whether the results tile has been swiped up into its taller form,
+    /// revealing the per-place "more details" section. Mirrors the
+    /// swipe-up-to-expand affordance on the `map_pin_tile` (PlaceCardSheet)
+    /// so the two surfaces share one gesture vocabulary: swipe up → snap
+    /// to a large tile with a selection haptic, swipe down → collapse.
+    @State private var expanded: Bool = false
 
     var body: some View {
         // Results get the roomier `.half` tile so the slideshow cards have
@@ -33,7 +39,9 @@ struct ImportSummaryCardView: View {
 
     private var tileSize: TileSize {
         if summary.isLoading || summary.isEmpty || allRegions { return .compact }
-        return .half
+        // Swiping the results tile up snaps it to the roomier `.large`
+        // size so the extra "more details" section has space to land.
+        return expanded ? .large : .half
     }
 
     /// Four render paths driven by the summary state. They share the
@@ -76,6 +84,10 @@ struct ImportSummaryCardView: View {
 
     private var resultsTile: some View {
         VStack(spacing: 12) {
+            // Grabber doubles as the swipe-up affordance: pull it (or the
+            // tile) up to expand into the taller "more details" form.
+            grabber
+
             closeRow
 
             // Horizontal slideshow — one pin-style card per imported
@@ -101,6 +113,38 @@ struct ImportSummaryCardView: View {
         .padding(18)
         .onChange(of: currentIndex) { _, _ in Haptics.tap() }
         .onAppear(perform: announceArrival)
+        // Vertical swipes expand / collapse the tile; `simultaneousGesture`
+        // lets the horizontal `TabView` keep paging untouched (we ignore
+        // any swipe that's predominantly horizontal).
+        .simultaneousGesture(expandDragGesture)
+    }
+
+    /// The little grey pill at the top of the results tile — the visual
+    /// cue that the tile can be pulled up. Matches the grabber on the
+    /// `map_pin_tile`.
+    private var grabber: some View {
+        Capsule()
+            .fill(Color(.systemGray4))
+            .frame(width: 36, height: 4)
+    }
+
+    /// Swipe up → snap to the large tile + selection haptic; swipe down →
+    /// collapse back to the half tile. Only predominantly-vertical drags
+    /// count, so paging between places (horizontal) is unaffected.
+    private var expandDragGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onEnded { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dy) > abs(dx) else { return }
+                if dy < -40 && !expanded {
+                    Haptics.select()
+                    withAnimation(SomedayAnimations.followCTA) { expanded = true }
+                } else if dy > 40 && expanded {
+                    Haptics.select()
+                    withAnimation(SomedayAnimations.followCTA) { expanded = false }
+                }
+            }
     }
 
     /// One success haptic the first time the results land. (The old
@@ -162,9 +206,88 @@ struct ImportSummaryCardView: View {
                 .foregroundColor(SomedayColors.grayMedium)
             }
 
+            // Revealed once the tile is swiped up — the richer per-place
+            // detail. Slides in from the bottom so the reveal reads as the
+            // tile "unfolding" rather than content popping in.
+            if expanded {
+                expandedDetails(for: place)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The "more details" block shown when the results tile is expanded.
+    /// Surfaces whatever extra context the imported place carries — tags,
+    /// event timing, neighborhood, the source it came from, and a link
+    /// back to the original post — so the user can decide on a place
+    /// without leaving the summary.
+    @ViewBuilder
+    private func expandedDetails(for place: Place) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+
+            Text("More details")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(SomedayColors.grayMedium)
+
+            if !place.tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(place.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(SomedayColors.grayLight)
+                                .foregroundColor(SomedayColors.charcoal)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+
+            if let timing = place.eventTimingLabel {
+                detailRow(icon: "clock", text: timing)
+            }
+
+            if !place.neighborhood.isEmpty {
+                detailRow(icon: "mappin.and.ellipse", text: place.neighborhood)
+            }
+
+            detailRow(icon: place.source.icon, text: place.source.label)
+
+            if let url = place.sourceURL {
+                Link(destination: url) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Open original post")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(SomedayColors.primary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One labelled line in the expanded detail block — a small grey glyph
+    /// followed by the value, matching the rows on the `map_pin_tile`.
+    private func detailRow(icon: String, text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(SomedayColors.grayMedium)
+                .frame(width: 16)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(SomedayColors.charcoal)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
     }
 
     /// Small source chip in the hero's bottom-left — mirrors the pin card.
