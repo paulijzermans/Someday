@@ -53,6 +53,12 @@ struct PlaceCardSheet: View {
     /// actions row. Local to this card — re-opening the same place
     /// after dismissing the card resets to the un-expanded view.
     @State private var availabilityExpanded = false
+    /// Compact (false) vs. large (true) tile. Swiping UP on the grabber /
+    /// card snaps to the large tile, revealing `expandedDetails` (tags,
+    /// recommender, friend ratings, source + date). Swiping DOWN collapses
+    /// it back to compact before a further downswipe dismisses. A crisp
+    /// selection haptic marks each snap so it reads as a physical detent.
+    @State private var expanded = false
     @State private var priceValue: Double = 5
     @State private var qualityValue: Double = 5
     @State private var serviceValue: Double = 5
@@ -152,6 +158,15 @@ struct PlaceCardSheet: View {
                         availabilityResultSection(result)
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
+
+                    // Large-tile extras — revealed when the user swipes the
+                    // grabber up. Surfaces detail that doesn't earn space on
+                    // the compact card (tags, who recommended it, every
+                    // friend's rating, source + saved date).
+                    if expanded {
+                        expandedDetails
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
                 }
                 .padding(.horizontal, 20)
                 // Small breathing room at the bottom of the card. We no
@@ -173,12 +188,38 @@ struct PlaceCardSheet: View {
             // image-bearing surface.
             .somedayCardEdge(cornerRadius: 16)
             .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
+            // Only the downward drag rubber-bands the card (max with 0);
+            // an upward drag doesn't move the card — it snaps to the large
+            // tile on release instead.
             .offset(y: max(dragOffset, 0))
             .gesture(
                 DragGesture()
                     .onChanged { dragOffset = $0.translation.height }
                     .onEnded { value in
-                        if value.translation.height > 120 || value.velocity.height > 500 {
+                        let dy = value.translation.height
+                        // Swipe UP → snap to the large tile (reveal more
+                        // info). Selection haptic = a crisp "click" detent.
+                        if dy < -40 && !expanded {
+                            Haptics.select()
+                            withAnimation(SomedayAnimations.followCTA) {
+                                expanded = true
+                                dragOffset = 0
+                            }
+                            return
+                        }
+                        // Swipe DOWN while large → collapse back to compact
+                        // first (one size step per swipe) rather than
+                        // dismissing straight through.
+                        if dy > 40 && expanded {
+                            Haptics.select()
+                            withAnimation(SomedayAnimations.followCTA) {
+                                expanded = false
+                                dragOffset = 0
+                            }
+                            return
+                        }
+                        // Compact tile: a firm downward swipe dismisses.
+                        if dy > 120 || value.velocity.height > 500 {
                             onDismiss()
                         } else {
                             withAnimation(SomedayAnimations.followCTA) { dragOffset = 0 }
@@ -335,6 +376,110 @@ struct PlaceCardSheet: View {
             .padding(.vertical, 2)
             .background(.white.opacity(0.9))
             .cornerRadius(6)
+        }
+    }
+
+    // MARK: - Large-tile extras
+
+    /// Friendly display name for a friend id, falling back gracefully when
+    /// the recommender / rater isn't in the loaded friends list.
+    private func friendName(_ id: String) -> String {
+        friends.first(where: { $0.id == id })?.name ?? "A friend"
+    }
+
+    /// Medium-style saved date, e.g. "Jun 6, 2026".
+    private var savedDateString: String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        return f.string(from: place.createdAt)
+    }
+
+    /// The detail block shown only on the large tile (after the user swipes
+    /// the grabber up). Everything here is secondary to the compact card —
+    /// useful once you're committed to looking closer, noise before then.
+    private var expandedDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Divider()
+                .padding(.top, 4)
+
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(SomedayColors.primary)
+                Text("More details")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.grayMedium)
+            }
+
+            // Tags — horizontally scrollable lime chips.
+            if !place.tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(place.tags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(SomedayColors.charcoal)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(SomedayColors.lime.opacity(0.25), in: Capsule())
+                        }
+                    }
+                }
+            }
+
+            if let rid = place.recommendedBy {
+                detailRow(icon: "hand.thumbsup.fill", text: "Recommended by \(friendName(rid))")
+            }
+
+            if let timing = place.eventTimingLabel {
+                detailRow(icon: "clock.fill", text: timing)
+            }
+
+            // Every friend's score (the compact card only shows an overall
+            // badge). Sorted highest-first.
+            if !place.friendRatings.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Friend ratings")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(SomedayColors.grayMedium)
+                    ForEach(place.friendRatings.sorted { $0.value > $1.value }, id: \.key) { entry in
+                        HStack(spacing: 8) {
+                            Text(friendName(entry.key))
+                                .font(.system(size: 13))
+                                .foregroundColor(SomedayColors.charcoal)
+                            Spacer(minLength: 0)
+                            HStack(spacing: 3) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.yellow)
+                                Text(String(format: "%.1f", entry.value))
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(SomedayColors.charcoal)
+                            }
+                        }
+                    }
+                }
+            }
+
+            detailRow(icon: place.source.icon, text: "\(place.source.label) · Saved \(savedDateString)")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    /// One icon + text line in the large-tile detail block.
+    private func detailRow(icon: String, text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(SomedayColors.primary)
+                .frame(width: 18)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(SomedayColors.charcoal.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 
