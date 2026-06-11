@@ -29,9 +29,10 @@ struct SomedayApp: App {
                     case .auth:
                         AuthView(appState: appState)
                     case .map:
-                        // First-run users land here too — the
-                        // OnboardingFlowTile overlays the map until
-                        // `appState.isOnboarding` flips false.
+                        // First-run users land here too — onboarding runs
+                        // inside the chat panel (an on-ramp card atop the
+                        // transcript) until `appState.isOnboarding` flips
+                        // false.
                         MapHomeView(appState: appState)
                     }
                 }

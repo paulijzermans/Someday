@@ -274,6 +274,16 @@ struct ChatContext: Codable, Sendable {
     let friendPlaces: [PlaceDigest]
     let lists: [ListDigest]
     let friends: [FriendDigest]
+
+    // ----- First-run -------------------------------------------------
+    /// True while the user is in first-run onboarding (the chat-driven
+    /// welcome flow). Flips the system prompt into ONBOARDING mode so
+    /// the assistant greets warmly, helps the user add their first
+    /// places, and nudges toward importing / pasting a list / finding
+    /// friends instead of answering as if the map were already full.
+    /// Optional-with-default on the wire so older Edge Function builds
+    /// that don't read it just keep normal behaviour.
+    var onboarding: Bool = false
 }
 
 /// Camera viewport sent to the model so it can reason about "around
@@ -455,7 +465,8 @@ enum ChatContextBuilder {
         myPlaces: [Place],
         friendPlaces: [Place],
         lists: [CustomList],
-        friends: [UserProfile]
+        friends: [UserProfile],
+        onboarding: Bool = false
     ) -> ChatContext {
         // Lookup tables. O(N·M) one-time passes are fine for typical
         // sizes; swap to dictionaries keyed by placeID if a user
@@ -519,7 +530,8 @@ enum ChatContextBuilder {
             myPlaces: mine,
             friendPlaces: theirs,
             lists: lists.map { ListDigest(name: $0.name, placeCount: $0.placeIDs.count) },
-            friends: friends.map { FriendDigest(name: $0.name) }
+            friends: friends.map { FriendDigest(name: $0.name) },
+            onboarding: onboarding
         )
     }
 }

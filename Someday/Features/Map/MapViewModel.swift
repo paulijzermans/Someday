@@ -21,6 +21,15 @@ final class MapViewModel {
     var reservationMode: ReservationMode = .tonight
     var showMapsImport = false
     var showSocialsImport = false
+    /// Presents the contacts-based friend-discovery sheet — the
+    /// "Find friends" on-ramp in the chat onboarding flow. Replaces the
+    /// friends step of the old OnboardingFlowTile wizard.
+    var showFriendDiscovery = false
+    /// True while first-run onboarding is active. Mirrored from
+    /// `AppState.isOnboarding` by `MapHomeView` so `buildChatContext`
+    /// can flip the assistant into ONBOARDING mode without the VM
+    /// needing a reference to AppState.
+    var onboardingActive = false
     /// Filled in by external triggers (Share Extension, deep link). The
     /// LinkImportView reads this as its initial value so the user doesn't
     /// have to paste the URL again.
@@ -398,7 +407,8 @@ final class MapViewModel {
             myPlaces: mine,
             friendPlaces: theirs,
             lists: customLists,
-            friends: friends
+            friends: friends,
+            onboarding: onboardingActive
         )
     }
 

@@ -9,11 +9,13 @@ enum AppScreen {
 final class AppState {
     var currentScreen: AppScreen
     var currentUser: UserProfile?
-    /// True between sign-up and onboarding completion. The map renders
-    /// underneath, with the `OnboardingFlowTile` overlaid on top — so
-    /// new users see the real product surface while they're walked
-    /// through the import + friends steps. Old `.onboarding` screen
-    /// case was removed.
+    /// True between sign-up and onboarding completion. Onboarding now
+    /// happens INSIDE the chat panel on the map — `MapHomeView` opens the
+    /// AI bar with an on-ramp card (Import Maps / Reels / Paste a list /
+    /// Find friends) pinned atop the transcript, and the assistant runs
+    /// in ONBOARDING mode — so new users see the real product surface
+    /// while they add their first places. Old `.onboarding` screen case
+    /// and the standalone `OnboardingFlowTile` wizard were both removed.
     var isOnboarding: Bool = false
     let services: ServiceContainer
 

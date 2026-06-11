@@ -33,7 +33,6 @@
 		A00042 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = F00042 /* Secrets.plist */; };
 		A00050 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00050 /* AuthView.swift */; };
 		A00051 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00051 /* AuthViewModel.swift */; };
-		A00060 /* OnboardingFlowTile.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00060 /* OnboardingFlowTile.swift */; };
 		A00070 /* MapHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00070 /* MapHomeView.swift */; };
 		A00071 /* MapViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00071 /* MapViewModel.swift */; };
 		A00072 /* PlacePinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00072 /* PlacePinView.swift */; };
@@ -115,7 +114,6 @@
 		F00042 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
 		F00050 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		F00051 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
-		F00060 /* OnboardingFlowTile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowTile.swift; sourceTree = "<group>"; };
 		F00070 /* MapHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapHomeView.swift; sourceTree = "<group>"; };
 		F00071 /* MapViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapViewModel.swift; sourceTree = "<group>"; };
 		F00072 /* PlacePinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacePinView.swift; sourceTree = "<group>"; };
@@ -452,7 +450,6 @@
 		D00060 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
-				F00060 /* OnboardingFlowTile.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -696,7 +693,6 @@
 				A00041 /* SupabaseConfig.swift in Sources */,
 				A00050 /* AuthView.swift in Sources */,
 				A00051 /* AuthViewModel.swift in Sources */,
-				A00060 /* OnboardingFlowTile.swift in Sources */,
 				A00070 /* MapHomeView.swift in Sources */,
 				A00071 /* MapViewModel.swift in Sources */,
 				A00072 /* PlacePinView.swift in Sources */,

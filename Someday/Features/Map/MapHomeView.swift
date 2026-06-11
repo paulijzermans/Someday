@@ -211,10 +211,10 @@ struct MapHomeView: View {
             // Top-of-screen confirmation after an import completes.
             importSummaryLayer
             shareRequestLayer
-            // First-run onboarding flow — overlays everything else when
-            // `appState.isOnboarding` is true, so the user always sees
-            // the current step until they finish.
-            onboardingLayer
+            // First-run onboarding now lives INSIDE the chat panel (the
+            // on-ramp card pinned atop the transcript), not as a separate
+            // full-screen wizard — see `beginChatOnboarding` /
+            // `onboardingOnRamps`. No dedicated layer here anymore.
             // NOTE: the AI Availability result used to render here as a
             // floating top-right bar (`availabilityBarLayer`). It now
             // expands inline inside `PlaceCardSheet` directly below the
@@ -253,6 +253,7 @@ struct MapHomeView: View {
                 onImport: { newPlaces in
                     Task {
                         await vm.importPlaces(newPlaces)
+                        if appState.isOnboarding { vm.addToOnboardingFirstList(newPlaces) }
                         vm.presentImportSummary(.init(places: newPlaces, source: .googleMaps))
                     }
                 },
@@ -297,6 +298,7 @@ struct MapHomeView: View {
                 onImport: { newPlaces in
                     Task {
                         await vm.importPlaces(newPlaces)
+                        if appState.isOnboarding { vm.addToOnboardingFirstList(newPlaces) }
                         vm.presentImportSummary(.init(places: newPlaces, source: .instagram))
                     }
                 },
@@ -305,6 +307,9 @@ struct MapHomeView: View {
                 }
             )
             .onDisappear { vm.prefillImportURL = nil }
+        }
+        .sheet(isPresented: $vm.showFriendDiscovery) {
+            FriendDiscoverySheet(appState: appState)
         }
         .task { await vm.loadData() }
         // External imports arriving via the Share Extension / Safari deep
@@ -362,7 +367,23 @@ struct MapHomeView: View {
                 vm.dismissBottomTilesForKeyboard()
             }
         }
-        .onAppear { handlePendingImport(appState.pendingImportURL) }
+        .onAppear {
+            handlePendingImport(appState.pendingImportURL)
+            beginChatOnboarding()
+        }
+        // Keep the VM's onboarding mirror in lockstep with AppState so
+        // `buildChatContext` flips the assistant into ONBOARDING mode for
+        // the whole first-run session and back out the moment the user
+        // finishes. Seeds the welcome panel if onboarding turns on after
+        // the view already appeared (belt-and-suspenders with onAppear).
+        .onChange(of: appState.isOnboarding) { _, isOn in
+            vm.onboardingActive = isOn
+            if isOn {
+                beginChatOnboarding()
+            } else {
+                collapseChrome()
+            }
+        }
         // Drag-to-merge confirmation. Phrasing matches the user's
         // mental model: the dragged list is "merged with" the target,
         // then deleted. Hosted at the MapHomeView level (NOT on the
@@ -440,6 +461,166 @@ struct MapHomeView: View {
         showWelcomeTiles = false
     }
 
+    // MARK: - Chat-driven onboarding
+
+    /// First-run onboarding now lives inside the chat panel instead of a
+    /// separate wizard. On the first map appearance (or whenever
+    /// `isOnboarding` turns on), we open the AI bar so the user lands in
+    /// the conversation with the on-ramp card (`onboardingOnRamps`)
+    /// pinned at the top of the transcript. The assistant is in
+    /// ONBOARDING mode (system prompt gated on `ChatContext.onboarding`)
+    /// so anything the user types is answered as a warm first-run guide.
+    @MainActor
+    private func beginChatOnboarding() {
+        guard appState.isOnboarding else { return }
+        vm.onboardingActive = true
+        // Pre-create the "My first places" bucket so the first import /
+        // pasted list drops into a ready list — same affordance the old
+        // wizard gave. Idempotent.
+        vm.ensureOnboardingFirstList()
+        withAnimation(SomedayAnimations.tile) {
+            vm.showSearch = true
+        }
+    }
+
+    /// A Maps / Socials on-ramp tap from the onboarding card. Arms the
+    /// onboarding-bucket capture and opens the matching native import
+    /// sheet — we reuse the exact same `LinkImportView` flow the rest of
+    /// the app uses rather than re-implementing import inside the chat.
+    @MainActor
+    private func onboardingImport(_ open: () -> Void) {
+        Haptics.tap()
+        open()
+    }
+
+    /// "Find friends" on-ramp — presents the contacts-discovery sheet
+    /// (ported from the old wizard's friends step into
+    /// `FriendDiscoverySheet`).
+    @MainActor
+    private func onboardingFindFriends() {
+        Haptics.tap()
+        vm.showFriendDiscovery = true
+    }
+
+    /// "Paste a list" on-ramp — drop the user straight into the input
+    /// with a short guiding nudge in the transcript. The model's normal
+    /// geocode + create_place tools turn the pasted names into pins, so
+    /// there's no bespoke list-extraction UI to maintain anymore.
+    @MainActor
+    private func onboardingPasteList() {
+        Haptics.tap()
+        if chat.messages.last?.content.contains("one place per line") != true {
+            chat.messages.append(ChatMessage(
+                role: .assistant,
+                content: "Paste your list below — one place per line — and I will pin them all to your map."
+            ))
+        }
+        chatInputFocused = true
+    }
+
+    /// "I am all set" / skip — finish onboarding. Always reachable from
+    /// the on-ramp card so the user is never trapped in first-run.
+    @MainActor
+    private func finishChatOnboarding() {
+        Haptics.success()
+        appState.completeOnboarding()
+    }
+
+    /// First-run on-ramp card rendered at the top of the chat
+    /// transcript. Warm greeting + four tappable ways to fill the map,
+    /// plus an always-available skip so the user is never trapped.
+    private var onboardingOnRamps: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Welcome to Someday \u{1F44B}")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(SomedayColors.charcoal)
+                Text("Let's get your map started. Pick a way in — or just tell me a place you love and I'll pin it.")
+                    .font(.system(size: 13))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 8) {
+                onRampRow(
+                    icon: "map.fill", tint: SomedayColors.primary,
+                    title: "Import from Google Maps",
+                    subtitle: "Bring in places you already saved"
+                ) { onboardingImport { vm.showMapsImport = true } }
+
+                onRampRow(
+                    icon: "play.rectangle.fill", tint: SomedayColors.coral,
+                    title: "Add a Reel or TikTok",
+                    subtitle: "Paste a link, we extract the spot"
+                ) { onboardingImport { vm.showSocialsImport = true } }
+
+                onRampRow(
+                    icon: "list.bullet.rectangle.fill", tint: SomedayColors.amber,
+                    title: "Paste a list",
+                    subtitle: "One place per line — we pin them all"
+                ) { onboardingPasteList() }
+
+                onRampRow(
+                    icon: "person.2.fill", tint: SomedayColors.greenDark,
+                    title: "Find friends",
+                    subtitle: "Add the people who matter"
+                ) { onboardingFindFriends() }
+            }
+
+            Button(action: finishChatOnboarding) {
+                Text("I'm all set — skip for now")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.grayMedium)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+        }
+        .padding(14)
+        .background(SomedayColors.grayLight.opacity(0.6))
+        .cornerRadius(18)
+    }
+
+    /// One tappable on-ramp row: tinted glyph tile + title/subtitle +
+    /// chevron, on a white card. Mirrors the extracted/match row look
+    /// used elsewhere so the muscle memory is consistent.
+    private func onRampRow(
+        icon: String,
+        tint: Color,
+        title: String,
+        subtitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11)
+                        .fill(tint.opacity(0.16))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(tint)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(SomedayColors.charcoal)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(SomedayColors.grayMedium)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(SomedayColors.grayMedium.opacity(0.6))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.white)
+            .cornerRadius(12)
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Open the chat panel pre-seeded with an "I'm here to help you
     /// add stuff" message. Triggered by the + button in the bottom
     /// tab bar. Keeping the seed as a normal assistant ChatMessage
@@ -454,8 +635,9 @@ struct MapHomeView: View {
             // animations) and TileBottom (empty same-size placeholder
             // pinned to the nav bar) — while the chat is still a
             // blank slate. We hide them the moment a message lands
-            // so the transcript has room.
-            if chat.messages.isEmpty {
+            // so the transcript has room. Suppressed during onboarding —
+            // the on-ramp card already owns the empty-transcript slot.
+            if chat.messages.isEmpty && !appState.isOnboarding {
                 showWelcomeTiles = true
             }
         }
@@ -1179,7 +1361,10 @@ struct MapHomeView: View {
     /// stroke so it reads as the bar growing, not stacking cards.
     private var aiChatBar: some View {
         VStack(spacing: 0) {
-            if !chat.messages.isEmpty || chat.isThinking {
+            // During onboarding the panel always mounts (even with an
+            // empty transcript) so the on-ramp card is visible the moment
+            // the user lands on the map.
+            if !chat.messages.isEmpty || chat.isThinking || appState.isOnboarding {
                 aiConversationPanel
                     .transition(.move(edge: .bottom).combined(with: .opacity))
 
@@ -1465,6 +1650,14 @@ struct MapHomeView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    // First-run on-ramp card pinned to the top of the
+                    // transcript. Real tappable rows (the markdown
+                    // renderer can't pillify custom `someday://` hosts),
+                    // so onboarding launches the native flows directly.
+                    if appState.isOnboarding {
+                        onboardingOnRamps
+                            .padding(.bottom, 4)
+                    }
                     ForEach(Array(chat.messages.enumerated()), id: \.element.id) { idx, msg in
                         // A bubble is "live" when the stream is still
                         // running and this is the last assistant message
@@ -1876,39 +2069,6 @@ struct MapHomeView: View {
         .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
     }
 
-    // MARK: - Onboarding Overlay
-
-    /// First-run onboarding flow rendered as a centered glass tile
-    /// over the map. Visible only when `appState.isOnboarding` is true
-    /// — set by `handleAuthSuccess`, cleared by `completeOnboarding`.
-    @ViewBuilder
-    private var onboardingLayer: some View {
-        if appState.isOnboarding {
-            ZStack {
-                // Same brand background the AuthView uses, so the
-                // hand-off from sign-up → onboarding feels like one
-                // continuous backdrop instead of "map flashes through
-                // onboarding glass". Hot-air balloon mark centred,
-                // mirroring the login layout for visual continuity.
-                Image("loginBackground")
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
-                Image("balloon")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 220)
-                    .foregroundStyle(.white.opacity(0.92))
-                    .offset(y: -160)
-                    .allowsHitTesting(false)
-                OnboardingFlowTile(appState: appState, vm: vm)
-            }
-            .transition(.opacity)
-            .zIndex(20)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-        }
-    }
-
     // MARK: - Share Request Floating Tile
 
     /// Big tile shown on launch ("Bodil wants to share an Amsterdam list").
@@ -1981,10 +2141,10 @@ struct MapHomeView: View {
 
     @ViewBuilder
     private var importSummaryLayer: some View {
-        // During onboarding the OnboardingFlowTile owns the celebration
-        // moment + result rows. Suppress the external summary so we
-        // don't double-render results in two competing tiles.
-        if let summary = vm.lastImportSummary, !appState.isOnboarding {
+        // Onboarding now runs inside the chat panel, so the standard
+        // import-summary card is the right confirmation surface even
+        // during first-run (the old wizard used to own that moment).
+        if let summary = vm.lastImportSummary {
             ImportSummaryCardView(
                 summary: summary,
                 onDismiss: { vm.dismissImportSummary() },
