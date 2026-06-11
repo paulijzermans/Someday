@@ -79,38 +79,42 @@ struct SavedToastCard: View {
 
 // MARK: - Tab bar button
 
-struct BottomTabButton: View {
+/// Icon-only tab element for the glass bottom bar. Follows the modern
+/// Instagram pattern: a single line-weight SF Symbol that swaps to its
+/// filled variant (and a slightly heavier weight) when its surface is
+/// active — no text label, no pill background. A `disabled` slot dims the
+/// glyph and stops taps, so a reserved-for-later tab reads as "coming
+/// soon" without looking broken.
+struct GlassTabIcon: View {
+    /// Outline symbol shown when inactive (e.g. "bell").
     let icon: String
-    let label: String
+    /// Filled symbol shown when active (e.g. "bell.fill"). Falls back to
+    /// `icon` when nil — fine for glyphs without a `.fill` variant.
+    var activeIcon: String? = nil
     var isActive: Bool = false
+    var isEnabled: Bool = true
     let action: () -> Void
 
     var body: some View {
-        // The Button has a no-op action; the press-down behavior is
-        // handled by `PressDownButtonStyle` below so the tile pops the
-        // instant the finger touches the button instead of waiting for
-        // release.
+        // No-op Button label; the press-down behaviour (instant tile pop +
+        // haptic on touch-down) is handled by `PressDownButtonStyle`.
         Button {} label: {
-            VStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: isActive ? .bold : .regular))
-                Text(label)
-                    .font(.system(size: 10, weight: isActive ? .bold : .medium))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(isActive ? AnyShapeStyle(SomedayColors.lime) : AnyShapeStyle(Color.clear))
-                    .padding(.horizontal, 4)
-            )
-            .foregroundColor(SomedayColors.charcoal)
-            // Ensure the entire button frame catches taps, not just the
-            // glyph + label glyph shapes.
-            .contentShape(Rectangle())
-            .animation(SomedayAnimations.chipToggle, value: isActive)
+            Image(systemName: isActive ? (activeIcon ?? icon) : icon)
+                .font(.system(size: 22, weight: isActive ? .semibold : .regular))
+                .foregroundColor(
+                    isEnabled
+                        ? SomedayColors.charcoal
+                        : SomedayColors.charcoal.opacity(0.28)
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                // Whole slot catches taps, not just the glyph silhouette.
+                .contentShape(Rectangle())
+                .animation(SomedayAnimations.chipToggle, value: isActive)
         }
         .buttonStyle(PressDownButtonStyle(onPress: action))
+        .disabled(!isEnabled)
+        .allowsHitTesting(isEnabled)
     }
 }
 

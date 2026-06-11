@@ -1093,10 +1093,9 @@ struct MapHomeView: View {
         VStack(spacing: 10) {
             HStack {
                 Spacer()
-                VStack(spacing: 10) {
-                    profileButton
-                    locateMeButton
-                }
+                // Profile moved into the bottom bar (far-right tab), so the
+                // top-right stack is just the locate-me button now.
+                locateMeButton
             }
             .padding(.top, 60)       // sits just below the search button
             .padding(.trailing, 18)
@@ -1112,10 +1111,12 @@ struct MapHomeView: View {
         .animation(SomedayAnimations.tile, value: vm.showSearch)
     }
 
-    private var profileButton: some View {
-        Button {
-            vm.showProfile = true
-        } label: {
+    /// Profile tab for the bottom bar (far-right slot). The user's avatar,
+    /// Instagram-style, with a lime ring when the profile sheet is open and
+    /// a hairline edge otherwise so it reads as a tappable element. Replaces
+    /// the old floating top-right avatar.
+    private var profileTabButton: some View {
+        Button {} label: {
             AsyncImage(url: appState.currentUser?.avatarURL) { phase in
                 switch phase {
                 case .success(let image):
@@ -1124,15 +1125,25 @@ struct MapHomeView: View {
                     Circle().fill(SomedayColors.butter)
                         .overlay(
                             Text(appState.currentUser?.initials.prefix(1) ?? "?")
-                                .font(.system(size: 14, weight: .bold))
+                                .font(.system(size: 13, weight: .bold))
                                 .foregroundColor(SomedayColors.green)
                         )
                 }
             }
-            .frame(width: 38, height: 38)
+            .frame(width: 30, height: 30)
             .clipShape(Circle())
-            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+            .overlay(
+                Circle().strokeBorder(
+                    vm.showProfile ? SomedayColors.lime : Color.somedayEdge,
+                    lineWidth: vm.showProfile ? 2 : 1
+                )
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .animation(SomedayAnimations.chipToggle, value: vm.showProfile)
         }
+        .buttonStyle(PressDownButtonStyle(onPress: { vm.showProfile = true }))
     }
 
     /// Round 38pt glass button under the profile avatar. Tap → walk
@@ -1715,9 +1726,10 @@ struct MapHomeView: View {
             Spacer()
 
             HStack(spacing: 0) {
-                BottomTabButton(
-                    icon: "bell.fill",
-                    label: "Activity",
+                // 1) Activity — far left.
+                GlassTabIcon(
+                    icon: "bell",
+                    activeIcon: "bell.fill",
                     isActive: vm.showActivity
                 ) {
                     withAnimation(SomedayAnimations.tile) {
@@ -1725,16 +1737,20 @@ struct MapHomeView: View {
                     }
                 }
 
+                // 2) Placeholder — reserved for a future surface. Disabled
+                //    so it reads as "coming soon" rather than a dead tap.
+                GlassTabIcon(
+                    icon: "square.grid.2x2",
+                    isEnabled: false
+                ) {}
+
+                // 3) Plus — the signature lime CTA, centred. Opens the AI
+                //    chat in an "add" context: the chat can add a venue from
+                //    a single sentence ("save Cafe de Klepel") via the
+                //    create_place + geocode_address tools, so the older
+                //    AddSourcesView overlay is no longer the default surface
+                //    (still reachable programmatically).
                 Button {
-                    // The + button now opens the AI chat directly,
-                    // in an "add" context. The chat is powerful
-                    // enough (via the create_place + geocode_address
-                    // tools) to add a venue from a single sentence
-                    // — "save Cafe de Klepel" — so the older
-                    // AddSourcesView overlay (Maps / Socials option
-                    // buttons) is no longer the default surface. The
-                    // overlay code is still present and reachable
-                    // programmatically, just not from this tab.
                     Haptics.tap()
                     openChatForAdding()
                 } label: {
@@ -1750,18 +1766,23 @@ struct MapHomeView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                BottomTabButton(
-                    icon: "list.bullet.rectangle.fill",
-                    label: "Lists",
+                // 4) Lists.
+                GlassTabIcon(
+                    icon: "square.stack",
+                    activeIcon: "square.stack.fill",
                     isActive: vm.showLists
                 ) {
                     withAnimation(SomedayAnimations.tile) {
                         vm.toggleOverlay(.lists)
                     }
                 }
+
+                // 5) Profile — far right. The user's avatar, Instagram-style,
+                //    with a lime ring when the profile sheet is open.
+                profileTabButton
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 10)
             .glassEffect(.regular, in: .capsule)
             .shadow(color: .black.opacity(0.08), radius: 12, y: -2)
             .padding(.horizontal, 16)

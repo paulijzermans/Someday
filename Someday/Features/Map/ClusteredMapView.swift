@@ -744,12 +744,22 @@ class SuggestionPinAnnotationView: MKAnnotationView {
         let border: CGFloat = 2.5
         let pointerH: CGFloat = 7
         let pointerHalf: CGFloat = 6.5
-        let pad: CGFloat = 1.5
 
-        let canvasW = pad + tileSide + pad
-        let canvasH = pad + tileSide + pointerH
-        let tileRect = CGRect(x: pad, y: pad, width: tileSide, height: tileSide)
-        let tip = CGPoint(x: pad + tileSide / 2, y: pad + tileSide + pointerH)
+        // The sparkle badge ALWAYS overhangs the top-right corner (unlike
+        // the saved pin's clock badge, which is event-only). So we must
+        // reserve the same overhang padding the place renderer reserves for
+        // its event badge — otherwise the badge + its white halo get
+        // clipped off the top and right edges of the canvas. Mirror the
+        // `PlacePinAnnotationView` event-pin layout exactly.
+        let badgeSize: CGFloat = 15
+        let topPad: CGFloat = badgeSize / 2
+        let rightPad: CGFloat = badgeSize / 2
+        let leftPad: CGFloat = 1.5
+
+        let canvasW = leftPad + tileSide + rightPad
+        let canvasH = topPad + tileSide + pointerH
+        let tileRect = CGRect(x: leftPad, y: topPad, width: tileSide, height: tileSide)
+        let tip = CGPoint(x: leftPad + tileSide / 2, y: topPad + tileSide + pointerH)
 
         let limeUI = UIColor(SomedayColors.lime)
 
@@ -798,7 +808,6 @@ class SuggestionPinAnnotationView: MKAnnotationView {
 
             // --- Sparkle badge (top-right) so the AI identity stays legible
             // even when the photo fills the tile ---
-            let badgeSize: CGFloat = 15
             let badgeRect = CGRect(
                 x: tileRect.maxX - badgeSize * 0.62,
                 y: tileRect.minY - badgeSize * 0.38,
