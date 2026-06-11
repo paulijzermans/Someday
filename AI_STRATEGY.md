@@ -120,33 +120,43 @@ Healthy ratio: lots of (1) and (2), occasional (3).
 - ✅ Protocol + Router abstraction for every service (the keystone).
 - ✅ Runtime tool loop live: `chat` Edge Function exposes `inspect_list`,
   `inspect_friend`, `create_list`, `delete_list`, `create_place`,
-  `delete_place`, `geocode_address`, `web_search`.
+  `delete_place`, `geocode_address`, `create_itinerary`, `web_search`.
 - ✅ Model renders into UI via the `someday://` action bus (`openPlace`,
-  `suggest`, `showOnMap`, `openList`…). This *is* a `render_map`-style tool.
+  `suggest`, `showOnMap`, `openList`, `plan`…). This *is* a `render_map`-style tool.
 - ✅ Map context injection — the model reasons over the user's saved corpus.
 - ✅ Mock/live fallback invariant keeps the app always-runnable.
+- ✅ **Narrow domain agents** stood up — `.claude/agents/{extraction,map,chat,
+  rls,reservation}-agent.md`, each pinned to one service boundary (§3).
+- ✅ **OBSERVE telemetry** — every tool call logs a structured `tool_event` line
+  (name, ok, ms, mutated, input keys) captured by Supabase function logs.
+- ✅ **VERIFY gate** — a Deno eval runner (`chat/evals/run.ts`) replays golden
+  prompts against the deployed function and asserts on tool choice + render links.
+- ✅ **First action-tool vertical slice** — `create_itinerary` end-to-end: TS tool
+  → `mutation` → `ItineraryService` (protocol + mock + router) → map carousel,
+  with a `someday://plan` re-frame action. The worked example of growth axis (2)+(3).
 
 ### 5.2 The gaps to close
-| Gap | Risk today | Target |
+| Gap | Status | Target |
 |---|---|---|
-| **Tool logic duplicated in TS** | `chat/index.ts` re-implements list/place mutations that also exist in Swift services → drift | One source of truth per domain; tools call the same logic the app does |
-| **No tool/transcript telemetry** | Can't see what the model tries or fails at → flywheel can't OBSERVE | Log tool calls + outcomes per session |
-| **No eval set** | Prompt/tool changes can silently regress behavior | A small "golden prompts" suite run on every Engine-B change |
-| **Generalist build agents** | Broad context = shallower, pricier work | Narrow domain agents per §3 |
-| **Tool catalog is inspect-heavy** | Model can read more than it can *do* | Grow action tools (itinerary, multi-step planning) |
+| **Tool logic still partly in TS** | ⚠️ open | Mutations already delegate to Swift via the `mutation` SSE seam (`create_*`/`delete_*`/`create_itinerary` are thin emitters); the read tools (`inspect_*`) still shape data in TS. One source of truth per domain. |
+| **Tool/transcript telemetry** | ✅ done (logs) | `tool_event` log lines per call. Next: promote to a `tool_events` table for per-user SQL aggregation. |
+| **Eval set** | ✅ done | Four golden prompts + a Deno runner gating on tool choice + render links. Grow the set as tools grow. |
+| **Generalist build agents** | ✅ done | Five narrow domain agents per §3. |
+| **Tool catalog is inspect-heavy** | ⚠️ improving | `create_itinerary` is the first multi-step action tool. Keep growing the *do* side (plan_day, trip-level planning). |
 
 ### 5.3 Migration sequence (crawl / walk / run)
-- **Crawl (now):**
-  - Add tool-call + transcript logging to the `chat` function (OBSERVE).
-  - Stand up ~6 golden prompts as the first eval set (VERIFY).
-  - Write one domain agent brief (start with `extraction-agent` or `map-agent`)
-    to prove the narrow-agent pattern.
-- **Walk:**
-  - Make each runtime tool delegate to a single source of truth so TS/Swift
-    can't drift. Decide the boundary (see §6).
-  - Close the loop: a weekly AI-summarized "what did the AI struggle with" →
-    2–3 tool/prompt changes → eval → ship.
-  - Expand action tools (`create_itinerary`, `plan_day`).
+- **Crawl (now): ✅ done.**
+  - ✅ Tool-call logging added to the `chat` function (OBSERVE).
+  - ✅ Golden-prompt eval set + runner stood up (VERIFY).
+  - ✅ All five domain agent briefs written — the narrow-agent pattern is proven.
+  - ✅ First action-tool slice (`create_itinerary`) shipped end-to-end.
+- **Walk (next):**
+  - Make each *read* tool delegate to a single source of truth so TS/Swift
+    can't drift (mutations already do via the SSE seam). Decide the boundary (§6).
+  - Close the loop: a weekly AI-summarized "what did the AI struggle with" (from
+    the `tool_event` logs) → 2–3 tool/prompt changes → eval → ship.
+  - Expand action tools (`plan_day`, trip-level planning); promote telemetry to a
+    `tool_events` table for SQL aggregation.
 - **Run:**
   - Parallel domain agents on independent features, gated by CI.
   - Model owns more flows end-to-end (planning, availability, trips) instead of

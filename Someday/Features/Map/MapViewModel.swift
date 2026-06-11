@@ -231,6 +231,11 @@ final class MapViewModel {
     /// when the bottom tile dismisses.
     var currentSuggestionID: String?
 
+    /// The day plan the chat agent most recently built via
+    /// `create_itinerary`. Kept so the `someday://plan` action can re-frame
+    /// the whole route on demand without the model re-emitting every stop.
+    var activeItinerary: Itinerary?
+
     /// Debounce token for the city resolve. Each `regionDidChange` call
     /// cancels the previous one so we only fire the SDK request after
     /// the user stops panning for ~300ms.
@@ -837,6 +842,70 @@ final class MapViewModel {
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.dismissAISuggestionHint() }
+        }
+    }
+
+    /// Render a chat-built day plan: resolve each stop to a coordinate and
+    /// hand the ordered set to the existing suggestion carousel, which
+    /// frames them on the map and lets the user swipe stop-to-stop. This is
+    /// the render half of the `create_itinerary` seam — the agent shaped
+    /// the plan, `ItineraryService` persisted it, and this turns it into
+    /// the same photo-tile pins every other suggestion uses (no bespoke
+    /// itinerary UI). Stores it as `activeItinerary` so `someday://plan`
+    /// can re-frame it later.
+    @MainActor
+    func applyItinerary(_ itinerary: Itinerary) {
+        activeItinerary = itinerary
+        let pins = itineraryPins(for: itinerary)
+        guard !pins.isEmpty else { return }
+        // `beginDiscoverAll` choreographs the zoom-out-to-fit → hold →
+        // zoom-to-first reveal and surfaces the swipeable tile. Ordered, so
+        // page 1 is the first stop of the day.
+        beginDiscoverAll(pins)
+    }
+
+    /// Re-frame the most recently built itinerary (the `someday://plan`
+    /// action). No-op with a soft haptic if there's no active plan.
+    @MainActor
+    func reframeActiveItinerary() -> Bool {
+        guard let itinerary = activeItinerary else { return false }
+        let pins = itineraryPins(for: itinerary)
+        guard !pins.isEmpty else { return false }
+        beginDiscoverAll(pins)
+        return true
+    }
+
+    /// Resolve an itinerary's stops to renderable suggestion pins. A stop
+    /// anchors either to a saved place (look the coord up by id) or to its
+    /// own lat/lon (a venue the agent geocoded). Stops we can't anchor are
+    /// dropped so the route has no gaps. The time label is folded into the
+    /// pin name ("10:00 · Café Veneur") so the carousel reads as a schedule.
+    @MainActor
+    private func itineraryPins(for itinerary: Itinerary) -> [SuggestedPin] {
+        itinerary.stops.compactMap { stop -> SuggestedPin? in
+            let coordinate: (lat: Double, lon: Double)?
+            if let pid = stop.placeID,
+               let saved = places.first(where: { $0.id == pid || $0.id.hasPrefix(pid) }) {
+                coordinate = (saved.latitude, saved.longitude)
+            } else if let lat = stop.latitude, let lon = stop.longitude {
+                coordinate = (lat, lon)
+            } else {
+                coordinate = nil
+            }
+            guard let coord = coordinate else { return nil }
+            let label = stop.time.map { "\($0) · \(stop.name)" } ?? stop.name
+            return SuggestedPin(
+                id: ChatAction.suggestionID(name: label, lat: coord.lat, lon: coord.lon),
+                name: label,
+                category: stop.category,
+                description: stop.note,
+                hours: nil,
+                price: nil,
+                website: nil,
+                phone: nil,
+                latitude: coord.lat,
+                longitude: coord.lon
+            )
         }
     }
 

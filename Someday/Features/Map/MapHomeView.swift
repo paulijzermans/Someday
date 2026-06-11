@@ -110,6 +110,11 @@ struct MapHomeView: View {
             userID: appState.currentUser?.id ?? "user_paul"
         )
         self._vm = State(initialValue: mapVM)
+        // Captured for the itinerary mutation below: the chat agent's
+        // create_itinerary plan is persisted through this service before
+        // the map frames it (router falls back to the mock when there's no
+        // backend, so this never throws in practice).
+        let itineraryService = appState.services.itinerary
         // Inline AI chat lives in the top-right search bar. The view
         // model is owned by the screen (not a sheet) so the conversation
         // persists while the user pans/zooms and inspects pins between
@@ -146,6 +151,15 @@ struct MapHomeView: View {
                         )
                     case .deletePlace(let id):
                         await vm.deletePlaceFromChat(placeID: id)
+                    case .createItinerary(let itinerary):
+                        // Persist through the service (mock today; a live
+                        // backend can slot in later without touching this),
+                        // then frame the plan on the map. The router never
+                        // throws — the mock fallback always succeeds — but
+                        // we still prefer the returned (possibly
+                        // server-stamped) plan when it comes back.
+                        let saved = (try? await itineraryService.save(itinerary)) ?? itinerary
+                        vm.applyItinerary(saved)
                     }
                 }
             }
@@ -625,6 +639,14 @@ struct MapHomeView: View {
             collapseChrome()
             vm.flyTo(latitude: lat, longitude: lon, span: span)
             return .handled
+
+        case .planDay:
+            // "See the whole day" — re-frame the active itinerary's stops
+            // as the swipeable route. Collapse the chat so the map is the
+            // focus, same as a suggest tap. Discards if there's no plan yet.
+            Haptics.heavy()
+            collapseChrome()
+            return vm.reframeActiveItinerary() ? .handled : .discarded
         }
     }
 

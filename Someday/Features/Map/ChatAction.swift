@@ -63,6 +63,14 @@ enum ChatAction: Equatable {
     /// Optional — the view layer falls back to a sane default.
     case showOnMap(name: String, latitude: Double, longitude: Double, span: Double?)
 
+    /// `someday://plan` — re-frame the day plan the chat agent most
+    /// recently built via `create_itinerary`. The plan itself arrives over
+    /// the SSE `mutation` channel (not as a link), so this carries no
+    /// payload; it just asks the map to fit the active itinerary's stops
+    /// again. Lets the assistant close a planning reply with a "See the
+    /// whole day" affordance.
+    case planDay
+
     /// Decode a `someday://` command URL. Returns nil for unrecognised
     /// schemes / hosts so callers can defer to the system handler.
     init?(url: URL) {
@@ -132,6 +140,11 @@ enum ChatAction: Equatable {
             let span = items.first(where: { $0.name == "span" })?.value
                 .flatMap(Double.init)
             self = .showOnMap(name: name, latitude: lat, longitude: lon, span: span)
+
+        case "plan":
+            // No payload — the plan lives on the VM (set when the
+            // create_itinerary mutation was applied). The tap just re-frames it.
+            self = .planDay
 
         default:
             return nil

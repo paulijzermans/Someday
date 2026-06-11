@@ -85,6 +85,48 @@ enum ChatMutation: Equatable, Sendable {
         listName: String?
     )
     case deletePlace(id: String)
+    /// The agent assembled a day plan (`create_itinerary`). iOS persists
+    /// it through `ItineraryService` and frames the stops on the map as a
+    /// swipeable route. The TS tool is a thin intent emitter — the plan's
+    /// structure arrives here fully shaped, no domain logic in between.
+    case createItinerary(Itinerary)
+}
+
+// MARK: - Itinerary domain types
+//
+// A day plan the chat agent can build via `create_itinerary`. These are
+// deliberately small value types living in the already-compiled
+// ChatService file (the Xcode project has no synchronized file groups, so
+// a fresh .swift file would need a manual pbxproj entry — see CLAUDE.md
+// §10). The matching service stack (`ItineraryService` + mock + router)
+// lives just below the mock chat service.
+
+/// One ordered stop in a planned day. A stop anchors to the map either by
+/// `placeID` (a place the user already saved — iOS resolves the coord) or
+/// by explicit `latitude`/`longitude` (a venue the agent geocoded). The
+/// server drops anchorless stops, so at least one of those is always set.
+struct ItineraryStop: Identifiable, Equatable, Sendable {
+    var id: UUID = UUID()
+    /// Time-of-day label ("10:00", "Lunch", "Sunset"); optional.
+    var time: String?
+    var name: String
+    /// Raw category string (food / drinks / coffee / activity / art / travel).
+    var category: String?
+    /// One-line reason this stop is on the route; optional.
+    var note: String?
+    /// UUID of a saved place, when the stop is one the user already pinned.
+    var placeID: String?
+    var latitude: Double?
+    var longitude: Double?
+}
+
+/// An ordered day plan. Rendered as a swipeable route on the map (each
+/// stop becomes a pin in the existing suggestion carousel) and persisted
+/// through `ItineraryService`.
+struct Itinerary: Identifiable, Equatable, Sendable {
+    var id: UUID = UUID()
+    var title: String
+    var stops: [ItineraryStop]
 }
 
 // MARK: - Wire types
@@ -504,8 +546,41 @@ struct MockChatService: ChatService {
                 // so the streaming UI is exercised even with no backend.
                 let reply: String
                 var steps: [(icon: String, label: String)] = []
+                // Optional mutation the mock emits alongside its reply, so
+                // the create_itinerary flow is exercised in demo mode /
+                // previews exactly like the live agent would drive it.
+                var mockMutation: ChatMutation?
 
-                if last.contains("how many") || last.contains("count") {
+                if last.contains("plan") || last.contains("itinerary") || last.contains("route")
+                    || (last.contains("day") && context.myPlaces.count >= 2) {
+                    // Build a tiny day from the first few saved places. Each
+                    // stop references a saved place by id, so iOS resolves
+                    // its coordinate the same way the live path does.
+                    let picks = Array(context.myPlaces.prefix(3))
+                    if picks.count >= 2 {
+                        let times = ["10:00", "13:00", "19:00"]
+                        let stops = picks.enumerated().map { i, p in
+                            ItineraryStop(
+                                time: times[min(i, times.count - 1)],
+                                name: p.name,
+                                category: p.category,
+                                note: nil,
+                                placeID: p.id,
+                                latitude: nil,
+                                longitude: nil
+                            )
+                        }
+                        mockMutation = .createItinerary(
+                            Itinerary(title: "Your day", stops: stops)
+                        )
+                        steps.append((icon: "map.fill", label: "Planning your day"))
+                        let linked = picks.map { "[\($0.name)](someday://place/\($0.id))" }
+                            .joined(separator: " → ")
+                        reply = "Here's a loop through your saves: \(linked). [See the whole day](someday://plan)."
+                    } else {
+                        reply = "Save a couple more places and I can string them into a day for you."
+                    }
+                } else if last.contains("how many") || last.contains("count") {
                     reply = "You've saved \(context.myPlaces.count) places, organised into \(context.lists.count) list(s)."
                 } else if last.contains("coffee") {
                     let coffees = context.myPlaces.filter { $0.category == "coffee" }
@@ -538,6 +613,12 @@ struct MockChatService: ChatService {
                         try await Task.sleep(for: .milliseconds(400))
                         continuation.yield(.stepDone(id: id))
                     }
+                    // Emit any side-effecting mutation BEFORE the text, so
+                    // the map has framed the plan by the time the reply
+                    // (with its "See the whole day" link) finishes typing.
+                    if let mockMutation {
+                        continuation.yield(.mutation(mockMutation))
+                    }
                     // Stream text in chunks for that just-typed feel
                     let chunks = reply.split(separator: " ").map(String.init)
                     for chunk in chunks {
@@ -552,6 +633,49 @@ struct MockChatService: ChatService {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+}
+
+// =============================================================================
+// Itinerary service — persists a chat-built day plan
+// =============================================================================
+//
+// A narrow service behind the now-familiar Router(live, fallback) seam
+// (AI_STRATEGY.md §2). The chat agent's `create_itinerary` tool emits a
+// `mutation`; iOS hands the decoded `Itinerary` to this service to persist
+// while the map frames it. There's no itinerary table / Edge Function yet,
+// so the live slot is `nil` everywhere and the router uses the mock — which
+// just echoes the plan back. When a backend lands, drop a
+// `SupabaseItineraryService` into the `live:` slot and nothing else changes.
+
+protocol ItineraryService: Sendable {
+    /// Persist (or, for now, just accept) a plan and return the stored
+    /// version. Returning the itinerary lets a future live implementation
+    /// hand back a server-assigned id without changing call sites.
+    func save(_ itinerary: Itinerary) async throws -> Itinerary
+}
+
+/// Demo / fallback implementation — accepts the plan and echoes it. Keeps
+/// the itinerary flow fully working with no backend (demo mode, previews).
+struct MockItineraryService: ItineraryService {
+    func save(_ itinerary: Itinerary) async throws -> Itinerary { itinerary }
+}
+
+/// Live-or-fallback wrapper. Mirrors `AvailabilityRouter` /
+/// `ReservationCheckRouter`: try the live service, fall back to the mock on
+/// any failure (or when no live service is wired) so the UI never hard-fails.
+struct ItineraryRouter: ItineraryService {
+    let live: ItineraryService?
+    let fallback: ItineraryService
+
+    func save(_ itinerary: Itinerary) async throws -> Itinerary {
+        if let live {
+            do { return try await live.save(itinerary) }
+            catch {
+                print("[ItineraryRouter] live save failed: \(error) — using fallback")
+            }
+        }
+        return try await fallback.save(itinerary)
     }
 }
 
@@ -768,6 +892,51 @@ struct SupabaseChatService: ChatService {
             case "delete_place":
                 guard let id = p.input.id else { return nil }
                 return .mutation(.deletePlace(id: id))
+            case "create_itinerary":
+                // The itinerary payload has its own shape (title + stops
+                // array) that doesn't fit `MutationInput`'s flat scalars,
+                // so decode the raw bytes a second time with a dedicated
+                // wrapper. The first `Wrapper` decode above still succeeds
+                // for this kind (all its optional fields just come back
+                // nil), so we never reach here without valid JSON.
+                struct ItinWrapper: Decodable {
+                    let input: Input
+                    struct Input: Decodable {
+                        let title: String?
+                        let stops: [Stop]?
+                        struct Stop: Decodable {
+                            let time: String?
+                            let name: String?
+                            let category: String?
+                            let note: String?
+                            let place_id: String?
+                            let latitude: Double?
+                            let longitude: Double?
+                        }
+                    }
+                }
+                guard
+                    let w = try? JSONDecoder().decode(ItinWrapper.self, from: bytes),
+                    let rawStops = w.input.stops
+                else { return nil }
+                let stops: [ItineraryStop] = rawStops.compactMap { s in
+                    guard let n = s.name, !n.isEmpty else { return nil }
+                    return ItineraryStop(
+                        time: s.time,
+                        name: n,
+                        category: s.category,
+                        note: s.note,
+                        placeID: s.place_id,
+                        latitude: s.latitude,
+                        longitude: s.longitude
+                    )
+                }
+                guard !stops.isEmpty else { return nil }
+                let itinerary = Itinerary(
+                    title: w.input.title?.isEmpty == false ? w.input.title! : "Your day",
+                    stops: stops
+                )
+                return .mutation(.createItinerary(itinerary))
             default:
                 return nil
             }

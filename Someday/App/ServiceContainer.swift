@@ -29,6 +29,11 @@ final class ServiceContainer {
     /// Context-aware AI chatbot. Backed by the `chat` Edge Function with
     /// a keyword-matched mock fallback. See `Core/Services/Chat/ChatService.swift`.
     let chat: ChatService
+    /// Persists a chat-built day plan (`create_itinerary`). Backed by
+    /// `ItineraryRouter`; no live backend yet, so it runs on the mock
+    /// fallback everywhere — drop a live service into its `live:` slot when
+    /// an itinerary table / Edge Function lands. See `ChatService.swift`.
+    let itinerary: ItineraryService
     /// Contacts permission + on-device contact hashing + Edge Function
     /// match. Drives the "find your loved ones on Someday" flow inside
     /// the onboarding tile. Real on Supabase stack, mock otherwise.
@@ -55,6 +60,7 @@ final class ServiceContainer {
                 fallback: MockReservationCheckService()
             ),
             chat: ChatRouter(live: nil, fallback: MockChatService()),
+            itinerary: ItineraryRouter(live: nil, fallback: MockItineraryService()),
             contacts: MockContactsService()
         )
     }()
@@ -93,6 +99,11 @@ final class ServiceContainer {
                 live: SupabaseChatService(),
                 fallback: MockChatService()
             ),
+            // No itinerary backend yet — live stays nil, so the router runs
+            // on the mock. The chat agent's create_itinerary flow still
+            // works end-to-end (plan is framed on the map); it just isn't
+            // persisted server-side until a backing service lands.
+            itinerary: ItineraryRouter(live: nil, fallback: MockItineraryService()),
             contacts: ContactsService()
         )
     }()
@@ -113,6 +124,7 @@ final class ServiceContainer {
         availability: AvailabilityService,
         reservationCheck: ReservationCheckService,
         chat: ChatService,
+        itinerary: ItineraryService,
         contacts: ContactsServiceProtocol
     ) {
         self.auth = auth
@@ -124,6 +136,7 @@ final class ServiceContainer {
         self.availability = availability
         self.reservationCheck = reservationCheck
         self.chat = chat
+        self.itinerary = itinerary
         self.contacts = contacts
     }
 }

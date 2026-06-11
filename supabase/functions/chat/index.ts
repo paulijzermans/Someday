@@ -304,6 +304,56 @@ Deno.serve(async (req) => {
                 },
               },
               {
+                name: "create_itinerary",
+                description:
+                  "Assemble an ordered day plan from places and render it on the map as a swipeable route. Use when the user asks to 'plan my day', 'build an itinerary', 'map out a route', 'what's a good Saturday', etc. Each stop is either a place the user already saved (pass its `place_id` from the context/tool results) or a brand-new venue you geocoded first (pass `latitude`+`longitude` — same `geocode_address` discipline as a suggest pin: no coords, no stop). Order the stops the way the day should flow (morning → night). This is a THIN intent: iOS persists the plan and frames the stops; you still write the human-facing plan in your reply with the normal place/suggest links.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    title: {
+                      type: "string",
+                      description:
+                        "Short name for the day, e.g. 'Jordaan Saturday' or 'Coffee + canals'.",
+                    },
+                    stops: {
+                      type: "array",
+                      description:
+                        "Ordered stops, earliest first. 2–6 is the sweet spot.",
+                      items: {
+                        type: "object",
+                        properties: {
+                          time: {
+                            type: "string",
+                            description:
+                              "Optional time-of-day label, e.g. '10:00', 'Lunch', 'Sunset'.",
+                          },
+                          name: { type: "string", description: "Stop / venue name." },
+                          category: {
+                            type: "string",
+                            description:
+                              "One of: food, drinks, coffee, activity, art, travel.",
+                          },
+                          note: {
+                            type: "string",
+                            description:
+                              "Optional one-line reason this stop is here / what to do.",
+                          },
+                          place_id: {
+                            type: "string",
+                            description:
+                              "UUID of a saved place, if this stop is one the user already pinned.",
+                          },
+                          latitude: { type: "number", description: "Required if no place_id." },
+                          longitude: { type: "number", description: "Required if no place_id." },
+                        },
+                        required: ["name"],
+                      },
+                    },
+                  },
+                  required: ["title", "stops"],
+                },
+              },
+              {
                 type: "web_search_20250305",
                 name: "web_search",
                 max_uses: 3,
@@ -484,6 +534,7 @@ function stepIcon(toolName: string): string {
     case "delete_list": return "trash";
     case "create_place": return "mappin.circle.fill";
     case "delete_place": return "trash";
+    case "create_itinerary": return "map.fill";
     default: return "sparkles";
   }
 }
@@ -523,6 +574,10 @@ function stepLabel(block: any): string {
   if (block.name === "delete_place") {
     return "Deleting a pin";
   }
+  if (block.name === "create_itinerary") {
+    const t = block.input?.title;
+    return t ? `Planning "${t}"` : "Planning your day";
+  }
   return "Working…";
 }
 
@@ -538,7 +593,12 @@ function stepLabel(block: any): string {
 
 // deno-lint-ignore no-explicit-any
 type ToolMutation = {
-  kind: "create_list" | "delete_list" | "create_place" | "delete_place";
+  kind:
+    | "create_list"
+    | "delete_list"
+    | "create_place"
+    | "delete_place"
+    | "create_itinerary";
   // deno-lint-ignore no-explicit-any
   input: any;
 };
@@ -701,6 +761,57 @@ async function executeClientTool(name: string, input: any, ctx: ChatContext): Pr
     };
   }
 
+  if (name === "create_itinerary") {
+    // Thin intent emitter (AI_STRATEGY.md §6): we normalise + shape the
+    // plan, but persistence + rendering happen in Swift through
+    // `ItineraryService` and the map carousel. No domain logic lives here.
+    const title = String(input?.title ?? "Your day").trim() || "Your day";
+    const rawStops = Array.isArray(input?.stops) ? input.stops : [];
+    const validCats = new Set(["food", "drinks", "coffee", "activity", "art", "travel"]);
+    // deno-lint-ignore no-explicit-any
+    const stops = rawStops
+      .map((s: any) => {
+        const stopName = String(s?.name ?? "").trim();
+        if (!stopName) return null;
+        const placeID = s?.place_id ? String(s.place_id).trim() : null;
+        const lat = Number(s?.latitude);
+        const lon = Number(s?.longitude);
+        const hasCoord = Number.isFinite(lat) && Number.isFinite(lon);
+        // A stop the client can render needs SOMETHING to anchor a pin:
+        // either a saved place id (iOS resolves the coord) or explicit
+        // coords. Drop anchorless stops so the route never has gaps.
+        if (!placeID && !hasCoord) return null;
+        const cat = validCats.has(String(s?.category ?? "").toLowerCase())
+          ? String(s.category).toLowerCase()
+          : null;
+        return {
+          time: s?.time ? String(s.time).trim() : null,
+          name: stopName,
+          category: cat,
+          note: s?.note ? String(s.note).trim() : null,
+          place_id: placeID,
+          latitude: hasCoord ? lat : null,
+          longitude: hasCoord ? lon : null,
+        };
+      })
+      .filter((s: unknown) => s !== null);
+
+    if (stops.length === 0) {
+      return {
+        content:
+          "create_itinerary needs at least one stop with a place_id OR latitude+longitude. Geocode new venues first, then retry.",
+      };
+    }
+    const summary = stops
+      // deno-lint-ignore no-explicit-any
+      .map((s: any, i: number) => `${i + 1}. ${s.time ? s.time + " — " : ""}${s.name}`)
+      .join("; ");
+    return {
+      content: `Built itinerary "${title}" with ${stops.length} stop${stops.length === 1 ? "" : "s"}: ${summary}. It's framed on the user's map now.`,
+      mutation: { kind: "create_itinerary", input: { title, stops } },
+    };
+  }
+
   return { content: `Unknown tool: ${name}` };
 }
 
@@ -850,6 +961,23 @@ date is broken — either commit to the date (from web_search) or drop it.
 
 If the user asks about events but you only find ongoing exhibitions / residencies, use
 the date range in \`hours=\` ("Through May 12", "Open Wed–Sun").
+════════════════════════════════════════════════════════
+
+════════════════════════════════════════════════════════
+ITINERARIES — planning a day / route.
+
+When the user asks to plan a day, build an itinerary, or map out a route, call
+\`create_itinerary\` AFTER you've settled the stops. It renders the day as a swipeable
+route on the map — the visible payoff of a plan.
+
+  • Each stop is EITHER a saved place (pass its \`place_id\` from the context / a tool
+    result) OR a brand-new venue you geocoded first (pass \`latitude\`+\`longitude\`).
+    Same hard rule as a suggest pin: a stop with no place_id and no coords is dropped,
+    so geocode new venues BEFORE calling the tool.
+  • Order stops the way the day flows (morning → night) and keep it tight: 2–6 stops.
+  • \`create_itinerary\` does NOT replace THE ONE RULE. Still write the human-facing plan
+    in your reply with the normal place / suggest links — the tool frames the route on
+    the map, your text is what the user reads. Don't just call the tool and go silent.
 ════════════════════════════════════════════════════════
 
 ════════════════════════════════════════════════════════
