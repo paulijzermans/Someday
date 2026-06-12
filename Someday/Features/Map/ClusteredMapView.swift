@@ -626,7 +626,7 @@ class PlacePinAnnotationView: MKAnnotationView {
 /// Value type shipped from `MapViewModel` into `ClusteredMapView` for
 /// each AI-proposed venue. Kept simple so the SwiftUI side can stash
 /// them in an array and let `syncSuggestions` diff by id.
-struct SuggestedPin: Identifiable, Equatable, Hashable, Sendable {
+struct SuggestedPin: Identifiable, Codable, Sendable {
     let id: String
     let name: String
     let category: String?
@@ -651,7 +651,55 @@ struct SuggestedPin: Identifiable, Equatable, Hashable, Sendable {
     let phone: String?
     let latitude: Double
     let longitude: Double
+    /// Wall-clock moment the suggestion first landed on the map. Defaults
+    /// to "now" so freshly-built pins start their clock immediately, but
+    /// it's `Codable` and preserved across upserts + app restarts so a
+    /// suggestion expires exactly 24h after it first appeared — not 24h
+    /// after the most recent relaunch. See `lifetime` / `isExpired`.
+    var createdAt: Date = .now
+
+    // MARK: Expiry
+
+    /// How long a chatbot-suggested pin lingers on the map before it's
+    /// swept away if the user never saves it to a list: one real day.
+    static let lifetime: TimeInterval = 24 * 60 * 60
+
+    /// The wall-clock instant this suggestion drops off the map.
+    var expiresAt: Date { createdAt.addingTimeInterval(Self.lifetime) }
+
+    /// True once the 24h window has elapsed — the sweep timer removes it.
+    var isExpired: Bool { expiresAt <= Date() }
+
+    /// Seconds left before expiry, floored at zero. Drives the countdown
+    /// pill in the suggestion tile.
+    var secondsRemaining: TimeInterval { max(0, expiresAt.timeIntervalSinceNow) }
+
+    // MARK: Identity
+    //
+    // Equality / hashing deliberately ignore `createdAt` so a re-suggested
+    // pin (same venue, fresher payload) compares equal to the lingering
+    // one and the upsert logic can choose which to keep without the clock
+    // tick making every pin look "changed" to SwiftUI's diffing.
+
+    static func == (lhs: SuggestedPin, rhs: SuggestedPin) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.category == rhs.category &&
+        lhs.description == rhs.description &&
+        lhs.hours == rhs.hours &&
+        lhs.price == rhs.price &&
+        lhs.website == rhs.website &&
+        lhs.phone == rhs.phone &&
+        lhs.latitude == rhs.latitude &&
+        lhs.longitude == rhs.longitude
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }
+
+extension SuggestedPin: Hashable {}
 
 /// Distinct pin renderer for AI suggestions. Lime fill + sparkle glyph
 /// reads instantly as "this is an AI proposal, not one of your saved

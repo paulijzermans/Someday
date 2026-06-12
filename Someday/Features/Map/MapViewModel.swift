@@ -224,7 +224,15 @@ final class MapViewModel {
     /// user can either save one into their map (TBD) or dismiss it.
     /// Held in an Array so insertion order is stable and dedup is
     /// cheap on `id`.
-    var aiSuggestionPins: [SuggestedPin] = []
+    ///
+    /// Persisted to `UserDefaults` on every mutation (see
+    /// `persistSuggestionPins`) so a chatbot suggestion lingers on the map
+    /// for a real 24h — surviving app restarts — and only drops off when
+    /// its `createdAt + lifetime` passes (swept by `startSuggestionSweep`)
+    /// or the user saves it to a list.
+    var aiSuggestionPins: [SuggestedPin] = [] {
+        didSet { persistSuggestionPins() }
+    }
 
     /// Ordered list backing the suggestion tile above the nav bar.
     /// One entry → single-pin info card (no swipe). Multiple entries →
@@ -268,6 +276,15 @@ final class MapViewModel {
     /// `animatePinRemoval`; drained one-per-stagger by the worker.
     private var pendingRemovalIDs: [String] = []
 
+    /// Long-lived ticker that sweeps expired AI-suggestion pins off the
+    /// map. Wakes every 60s (and once on launch) and drops any pin whose
+    /// 24h window has elapsed. Held so it can be cancelled if the VM is
+    /// ever torn down.
+    private var suggestionSweepTask: Task<Void, Never>?
+
+    /// UserDefaults key for the persisted suggestion-pin array.
+    private static let suggestionPinsDefaultsKey = "someday.aiSuggestionPins.v1"
+
     private let placeService: PlaceServiceProtocol
     private let userService: UserServiceProtocol
     private let searchService: LocationSearchProtocol
@@ -301,6 +318,70 @@ final class MapViewModel {
         self.listService = services.lists
         self.contactsService = services.contacts
         self.userID = userID
+
+        // Re-hydrate any still-living suggestions from a previous run and
+        // start the 24h expiry sweep. Pins that already aged out while the
+        // app was closed are dropped during load.
+        loadPersistedSuggestionPins()
+        startSuggestionSweep()
+    }
+
+    // MARK: - Suggestion-pin persistence & expiry
+    //
+    // Chatbot suggestions linger on the map for a real day. To make that
+    // survive app restarts the array is mirrored into UserDefaults as JSON
+    // on every mutation, re-hydrated on launch, and continuously swept for
+    // pins whose `createdAt + 24h` has passed.
+
+    /// Serialise `aiSuggestionPins` to UserDefaults. Called from the
+    /// property's `didSet` so persistence is automatic — no caller has to
+    /// remember to flush. A failed encode just no-ops (the pins stay in
+    /// memory for this session).
+    private func persistSuggestionPins() {
+        guard let data = try? JSONEncoder().encode(aiSuggestionPins) else { return }
+        UserDefaults.standard.set(data, forKey: Self.suggestionPinsDefaultsKey)
+    }
+
+    /// Re-hydrate suggestions saved by a previous run, dropping any that
+    /// already expired while the app was closed. Assigns through the normal
+    /// stored property so the surviving set is immediately re-persisted in
+    /// its pruned form.
+    private func loadPersistedSuggestionPins() {
+        guard
+            let data = UserDefaults.standard.data(forKey: Self.suggestionPinsDefaultsKey),
+            let decoded = try? JSONDecoder().decode([SuggestedPin].self, from: data)
+        else { return }
+        aiSuggestionPins = decoded.filter { !$0.isExpired }
+    }
+
+    /// Kick off the long-lived expiry ticker. Runs an immediate sweep, then
+    /// every 60s until cancelled. 60s granularity is plenty for a 24h
+    /// window — the countdown pill animates smoothly on its own via
+    /// `TimelineView`; this only governs when the pin actually disappears.
+    private func startSuggestionSweep() {
+        suggestionSweepTask?.cancel()
+        suggestionSweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await MainActor.run { self?.sweepExpiredSuggestions() }
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    /// Drop any suggestion whose 24h window has elapsed — from the map
+    /// pins and, if currently shown, the bottom tile too.
+    private func sweepExpiredSuggestions() {
+        let live = aiSuggestionPins.filter { !$0.isExpired }
+        if live.count != aiSuggestionPins.count {
+            withAnimation(SomedayAnimations.inTileNav) {
+                aiSuggestionPins = live
+                discoverAllSuggestions.removeAll { $0.isExpired }
+                if let cur = currentSuggestionID,
+                   !live.contains(where: { $0.id == cur }) {
+                    currentSuggestionID = nil
+                }
+            }
+        }
     }
 
     // MARK: - Location dedup
@@ -826,7 +907,12 @@ final class MapViewModel {
                         .compactMap { $0 }.count
                 }
                 if score(pin) > score(existing) {
-                    aiSuggestionPins[idx] = pin
+                    // Keep the ORIGINAL drop time so the richer payload
+                    // doesn't reset the 24h countdown — the user has
+                    // already been looking at this pin.
+                    var richer = pin
+                    richer.createdAt = existing.createdAt
+                    aiSuggestionPins[idx] = richer
                 }
             } else {
                 aiSuggestionPins.append(pin)
@@ -964,15 +1050,18 @@ final class MapViewModel {
         return true
     }
 
-    /// Wipes every AI-proposed pin. Hooked up to the chat's clear
-    /// thread action — clearing the conversation also clears the
-    /// breadcrumb of suggestions it dropped.
+    /// Tears down the bottom suggestion *tile* (carousel + breathing
+    /// highlight) without evicting the pins from the map. Hooked up to the
+    /// chat's clear-thread action: clearing the conversation dismisses the
+    /// in-chat surfaces, but each suggested pin now owns an independent 24h
+    /// life on the map (persisted, swept by `sweepExpiredSuggestions`) and
+    /// shouldn't vanish just because the user cleared the thread. Pins drop
+    /// off when their clock runs out or when saved to a list.
     @MainActor
     func clearAISuggestionPins() {
         discoverAllRevealTask?.cancel()
         discoverAllRevealTask = nil
         withAnimation(SomedayAnimations.inTileNav) {
-            aiSuggestionPins.removeAll()
             discoverAllSuggestions.removeAll()
             currentSuggestionID = nil
         }
@@ -991,13 +1080,14 @@ final class MapViewModel {
         Haptics.tap()
         selectedPlace = nil
 
-        // Fresh discover replaces the previous one — wipe any pins a
-        // prior "Discover all" dropped on the map so successive lists
-        // don't accumulate stale breadcrumbs. The new set is dropped
-        // in below (single-pin focus or multi-pin upsert).
+        // Fresh discover swaps the bottom *tile* contents but deliberately
+        // does NOT wipe `aiSuggestionPins`: every suggested pin now lives on
+        // the map for a full 24h (or until saved), so reopening the carousel
+        // for a new batch must not evict pins from earlier turns. The new
+        // set is upserted into the map below; old pins age out on their own
+        // clock via `sweepExpiredSuggestions`.
         discoverAllRevealTask?.cancel()
         discoverAllRevealTask = nil
-        aiSuggestionPins.removeAll()
         discoverAllSuggestions.removeAll()
         currentSuggestionID = nil
 
@@ -1093,7 +1183,11 @@ final class MapViewModel {
                             .compactMap { $0 }.count
                     }
                     if score(pin) > score(existing) {
-                        aiSuggestionPins[idx] = pin
+                        // Preserve the original drop time so a richer
+                        // re-suggest doesn't reset the 24h clock.
+                        var richer = pin
+                        richer.createdAt = existing.createdAt
+                        aiSuggestionPins[idx] = richer
                     }
                 } else {
                     aiSuggestionPins.append(pin)
@@ -1597,6 +1691,63 @@ final class MapViewModel {
             selectedPlace = nil   // dismiss the place card if it's open
             showOverlay(.lists)
         }
+    }
+
+    /// "Save to list" from the suggestion tile. Converts an ephemeral
+    /// `SuggestedPin` into a real saved `Place`, drops the lingering
+    /// suggestion (its 24h countdown stops the moment it's saved), and
+    /// hands the new place to the Lists picker so the user can file it.
+    ///
+    /// This is the one action that promotes a chatbot suggestion from
+    /// "on the map for a day" to "permanently saved" — exactly the escape
+    /// hatch the countdown pill is nudging toward.
+    @MainActor
+    func saveSuggestionToList(_ pin: SuggestedPin) {
+        let category = pin.category
+            .flatMap { PlaceCategory(rawValue: $0.lowercased()) } ?? .food
+        let place = Place(
+            id: UUID().uuidString,
+            name: pin.name.trimmingCharacters(in: .whitespaces),
+            category: category,
+            latitude: pin.latitude,
+            longitude: pin.longitude,
+            source: .manual,
+            neighborhood: currentCityName ?? "",
+            isSaved: true,
+            ownerID: userID
+        )
+        guard !place.name.isEmpty else { return }
+
+        // De-dupe against an already-saved venue at the same spot so a
+        // double-tap (or saving a pin the user already has) doesn't create
+        // a twin. If it's already on the map, just route to the picker.
+        let existing = places.first { Self.isLikelySamePlace($0, place) }
+        let target = existing ?? place
+        if existing == nil {
+            withAnimation(SomedayAnimations.tile) {
+                places.append(place)
+            }
+            Task {
+                do { try await placeService.savePlace(place) }
+                catch {
+                    #if DEBUG
+                    print("[MapViewModel] saveSuggestionToList persist failed: \(error)")
+                    #endif
+                }
+            }
+        }
+
+        // Stop the countdown: pull the suggestion off the map + tile.
+        withAnimation(SomedayAnimations.inTileNav) {
+            aiSuggestionPins.removeAll { $0.id == pin.id }
+            discoverAllSuggestions.removeAll { $0.id == pin.id }
+            if currentSuggestionID == pin.id { currentSuggestionID = nil }
+        }
+        Haptics.success()
+
+        // Hand the saved place to the Lists picker (also tears down the
+        // remaining bottom tiles so the picker owns the screen).
+        beginAddImportedPlacesToList([target])
     }
 
     /// First custom list this place currently belongs to. Returns nil if

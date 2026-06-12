@@ -2531,7 +2531,8 @@ struct MapHomeView: View {
                             longitude: pin.longitude
                         )
                     },
-                    onDismiss: { vm.endDiscoverAll() }
+                    onDismiss: { vm.endDiscoverAll() },
+                    onSave: { pin in vm.saveSuggestionToList(pin) }
                 )
                 .padding(.horizontal, 16)
                 .padding(.bottom, 96)
@@ -3221,7 +3222,17 @@ private struct DiscoverAllCarouselTile: View {
     let pins: [SuggestedPin]
     let onPageChange: (SuggestedPin) -> Void
     let onDismiss: () -> Void
+    /// Promote the currently-shown suggestion to a saved place + Lists
+    /// picker. Stops that pin's 24h countdown.
+    let onSave: (SuggestedPin) -> Void
     @State private var pageIndex: Int? = 0
+
+    /// The suggestion currently centred in the pager — the one the Save
+    /// button acts on. Bounds-guarded against a phantom scroll index.
+    private var currentPin: SuggestedPin? {
+        let i = pageIndex ?? 0
+        return pins.indices.contains(i) ? pins[i] : pins.first
+    }
 
     /// Fixed height of each carousel page. The tile mirrors the saved-
     /// place pin tile (`PlaceCardSheet`): a 96pt square hero on the left
@@ -3285,6 +3296,28 @@ private struct DiscoverAllCarouselTile: View {
                     Spacer()
                 }
             }
+
+            // Save-to-list CTA. The signature lime button (same as the
+            // import / add CTAs elsewhere) is the escape hatch the
+            // countdown pill nudges toward: tap it and the suggestion
+            // becomes a permanent saved place, its clock stops, and the
+            // Lists picker opens to file it.
+            Button {
+                if let pin = currentPin { onSave(pin) }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Save to list")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .foregroundColor(SomedayColors.charcoal)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(SomedayColors.lime, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Save suggestion to a list")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
@@ -3366,6 +3399,8 @@ private struct DiscoverAllPage: View {
                     .foregroundColor(SomedayColors.grayMedium)
                 }
 
+                countdownPill
+
                 Text(pin.description ?? "AI-suggested spot near you.")
                     .font(.system(size: 14))
                     .foregroundColor(SomedayColors.charcoal.opacity(0.85))
@@ -3379,6 +3414,41 @@ private struct DiscoverAllPage: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// Live countdown pill — "Stays 23h 14m". A `TimelineView` ticking once
+    /// a minute re-renders the label so the user watches the window shrink;
+    /// when the suggestion is saved to a list the pin (and this whole tile)
+    /// is gone, so there's no "saved" state to draw here. The clock face +
+    /// lime tint reads as "act before this expires".
+    @ViewBuilder
+    private var countdownPill: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            HStack(spacing: 5) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Stays \(Self.remainingLabel(pin.secondsRemaining))")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(SomedayColors.charcoal)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(SomedayColors.lime.opacity(0.85), in: Capsule())
+        }
+    }
+
+    /// Compact "Xh Ym" / "Ym" / "<1m" rendering of a seconds-remaining
+    /// value for the countdown pill. Drops the minutes once over an hour
+    /// only if exactly on the hour; otherwise shows both for a live feel.
+    private static func remainingLabel(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        guard total > 0 else { return "<1m" }
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 {
+            return m > 0 ? "\(h)h \(m)m" : "\(h)h"
+        }
+        return m > 0 ? "\(m)m" : "<1m"
     }
 
     /// AI suggestions carry no real photo, so the hero is the brand-gradient
