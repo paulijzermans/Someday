@@ -476,38 +476,23 @@ Deno.serve(async (req) => {
                   required: ["title", "stops"],
                 },
               },
-              {
-                name: "ask_selection",
-                description:
-                  "Ask the user a short question by showing them tappable option BUTTONS instead of expecting them to type a free-text reply. Use this WHENEVER a request is open-ended or under-specified and the missing information is a small, listable set of choices — vibe, cuisine, budget band, neighbourhood, party size, time of day, indoor/outdoor, etc. (e.g. 'where should I go tonight?', 'recommend a place', 'surprise me', 'I'm bored'). This renders an interactive selection box in the chat; the user's pick(s) come back as their next message, after which you continue (usually with geocoded `someday://suggest` pins). Prefer this over writing an open-ended question in prose. Call it on its own turn — a one-line lead-in of text is fine, but the buttons ARE the question, so don't also list the options as text. Don't use it when you already have enough to answer, or when a pin is selected and the user asked a direct factual question about it.",
-                input_schema: {
-                  type: "object",
-                  properties: {
-                    prompt: {
-                      type: "string",
-                      description:
-                        "The question shown above the buttons, e.g. 'What kind of evening are you after?'.",
-                    },
-                    options: {
-                      type: "array",
-                      description:
-                        "2–6 SHORT option labels (a few words each), e.g. ['Cocktail bar','Natural wine','Cosy pub','Late-night eats'].",
-                      items: { type: "string" },
-                    },
-                    multi: {
-                      type: "boolean",
-                      description:
-                        "true → the user can pick SEVERAL options and tap a button to submit (use when answers combine, e.g. which vibes appeal). false → single-choice: tapping one option submits instantly (use for mutually-exclusive questions). Default false.",
-                    },
-                    submit_label: {
-                      type: "string",
-                      description:
-                        "Only used when multi=true: the commit button label, e.g. 'Show picks' or 'Next'. Defaults to 'Next'.",
-                    },
-                  },
-                  required: ["prompt", "options"],
-                },
-              },
+              // TEMPORARILY DISABLED — `ask_selection` is the one tool that ends
+              // a turn on a dangling tool_use (we render the box and wait for the
+              // user's tap as a fresh turn, so we never feed a tool_result). In
+              // the Supabase/Deno edge runtime a tool-terminated turn never
+              // delivers its `message_delta`/`message_stop`, so the stream reader
+              // waits forever for a closer that never comes and the whole chat
+              // hangs. Confirmed by A/B test (June 2026): every OTHER path ends in
+              // text and terminates cleanly, which is why the chat worked before
+              // this tool existed. Pulled from the toolset so the chat is usable
+              // again; the proper fix (detect end-of-turn without `message_stop`)
+              // is tracked separately. Keep the handler + system-prompt guidance
+              // commented below so re-enabling is a one-line restore.
+              // {
+              //   name: "ask_selection",
+              //   description: "...",
+              //   input_schema: { ... },  // see git history before this commit
+              // },
               {
                 type: "web_search_20250305",
                 name: "web_search",
@@ -603,28 +588,30 @@ Deno.serve(async (req) => {
           // delivers it — no SDK line-buffer lag — and stop the moment
           // `handleEvent` reports the turn is terminal.
           //
-          // THE HANG + ITS FIX. In the Supabase/Deno edge runtime the Anthropic
-          // SSE socket stays open after `message_stop`, and Deno's fetch
-          // overrides our `accept-encoding: identity` so the body comes back
-          // gzipped — and Deno's streaming gunzip holds the tail of the final
-          // member until more bytes (or EOF) arrive. Neither comes: the API
-          // keeps the connection alive, so the LAST control events
-          // (content_block_stop / message_delta / message_stop) never surface
-          // and `reader.read()` blocks forever. The visible symptom is exactly
-          // what the repro showed: the text deltas flush, then the stream wedges
-          // with no `done` — stranding the tool loop, `selection`, `done`, and
-          // the debug-row write (the turn LOOKS alive because text streams
-          // before the stall).
+          // THE HANG + ITS FIX (root cause confirmed by instrumentation, 2026-06).
+          // In the Supabase/Deno edge runtime, ANY turn whose response contains a
+          // tool call — a client `tool_use` (e.g. ask_selection) OR the server
+          // `web_search` — never delivers its terminal `message_delta` /
+          // `message_stop` events. The content blocks all stream and even hit
+          // `content_block_stop`, but the message-level closers strand upstream
+          // (the API holds the HTTP connection open for keep-alive). Pure TEXT
+          // turns DO terminate, which is why a plain "say hi" worked and masked
+          // this for tool turns. Verified by A/B: with only web_search the turn
+          // strands on a web_search call; with only client tools it strands on
+          // ask_selection — so it is not specific to either kind, it is tool
+          // calls in general.
           //
-          // Fix: a per-read idle watchdog. We race each `reader.read()` against
-          // a timer. While the model is doing real work — emitting tokens, or
-          // running web_search (which sends periodic `ping` keep-alives) — bytes
-          // keep arriving and reset the timer. Once the model is genuinely done,
-          // the socket goes silent (the tail is stranded) and the idle timer
-          // fires: we conclude the turn is complete and finalize with the blocks
-          // we've assembled, never issuing the read that would hang forever.
-          const IDLE_MS = 1500;       // silence after data ⇒ wedged on stranded tail
-          const FIRST_BYTE_MS = 15000; // generous wait for the first byte (TTFT)
+          // We therefore CANNOT wait for `message_stop`. We finalize on an
+          // EVENT-IDLE timeout: if no *real* Anthropic event has been parsed for
+          // IDLE_MS, the turn is done and we assemble the blocks we have. An
+          // earlier attempt timed silence-of-READS, but that failed: the stranded
+          // socket isn't silent — it dribbles empty / keep-alive chunks that make
+          // `reader.read()` resolve constantly, so a per-read timer never reached
+          // its threshold (instrumentation showed 26+ reads, 0 idle fires). Timing
+          // silence-of-EVENTS instead is immune to that busy-spin: empty reads
+          // never advance `lastEventAt`, so the deadline still arrives.
+          const IDLE_MS = 1200;        // no new event for this long ⇒ turn is done
+          const FIRST_EVENT_MS = 15000; // generous wait for the first event (TTFT)
           let done = false;
           let wedged = false;
           try {
@@ -633,29 +620,39 @@ Deno.serve(async (req) => {
             const reader = body.getReader();
             const decoder = new TextDecoder();
             let buf = "";
-            let sawData = false;
+            let lastEventAt = 0;        // 0 until the first real event arrives
             while (!done) {
-              // Race the next read against an idle timeout. `setTimeout`'s id is
-              // captured so we always clear it — a leaked timer would keep the
-              // isolate alive past the turn.
+              // Deadline since the last PARSED event (not the last read). Before
+              // any event, use the generous first-event budget.
+              const budget = lastEventAt === 0 ? FIRST_EVENT_MS : IDLE_MS;
+              const elapsed = lastEventAt === 0 ? 0 : Date.now() - lastEventAt;
+              const remaining = budget - elapsed;
+              if (remaining <= 0) {
+                // No new event within the idle window ⇒ the terminal events are
+                // stranded (tool turn). Treat the turn as complete; finalize below.
+                wedged = true;
+                break;
+              }
+              // Race the next read against the REMAINING idle budget. `setTimeout`'s
+              // id is captured so we always clear it — a leaked timer would keep
+              // the isolate alive past the turn.
               let timer: number | undefined;
               const idle = new Promise<"idle">((resolve) => {
-                timer = setTimeout(
-                  () => resolve("idle"),
-                  sawData ? IDLE_MS : FIRST_BYTE_MS,
-                ) as unknown as number;
+                timer = setTimeout(() => resolve("idle"), remaining) as unknown as number;
               });
               const result = await Promise.race([reader.read(), idle]);
               if (timer !== undefined) clearTimeout(timer);
               if (result === "idle") {
-                // Socket went quiet with the terminal events stranded upstream.
-                // Treat the turn as complete and finalize below.
-                wedged = true;
-                break;
+                // Timer won the race. Loop re-checks the deadline at the top: if
+                // a real event arrived in the meantime `lastEventAt` moved and we
+                // keep reading; otherwise `remaining <= 0` and we finalize.
+                continue;
               }
               const { value, done: readerDone } = result;
               if (readerDone) break;
-              sawData = true;
+              // NB: we do NOT touch `lastEventAt` here — only a successfully
+              // PARSED event below counts as activity. Empty / keep-alive chunks
+              // must not keep the turn alive forever.
               buf += decoder.decode(value, { stream: true });
               let nl: number;
               while ((nl = buf.indexOf("\n\n")) !== -1) {
@@ -675,6 +672,7 @@ Deno.serve(async (req) => {
                 } catch (_e) {
                   continue; // skip non-JSON keep-alive/comment frames
                 }
+                lastEventAt = Date.now(); // a real event ⇒ reset the idle clock
                 if (evt?.type === "error") {
                   throw new Error(
                     `anthropic stream error: ${JSON.stringify(evt.error ?? evt)}`,
@@ -1686,17 +1684,7 @@ FILE-IT OFFER — when the user is looking at ONE of their OWN saved places (it'
   • Tapping opens the Lists overlay in toggle mode (each list the pin is already in shows a coloured border; tap to add/remove). It does NOT create a list — it's for organising an EXISTING pin into EXISTING lists.
   • Skip it if the place is already in a fitting list, if the user is just asking a quick fact, or if you've already offered for this pin. At most once per pin. Keep it to a short trailing sentence.
 
-ASK WITH A SELECTION BOX (\`ask_selection\` tool) — this is your DEFAULT move whenever a request is open-ended or under-specified. Instead of writing a paragraph of open questions and hoping for a tidy reply, call the \`ask_selection\` tool: the app renders tappable option BUTTONS and the user's pick(s) come back as their next message.
-  · \`multi: false\` → single-choice: the user taps ONE option and it submits instantly. Use for mutually-exclusive questions ("Which neighbourhood?").
-  · \`multi: true\` → multi-choice: options toggle and a submit button (set \`submit_label\`, e.g. "Show picks") sends them all. Use when several answers can combine ("Which vibes appeal?").
-  · Provide 2–6 SHORT \`options\` (a few words each). \`prompt\` is the question shown above the buttons. The buttons ARE the options — never also list them as text.
-  · A one-line lead-in of normal text BEFORE the tool call is fine ("Let me narrow it down —"); then call the tool. Call it ON ITS OWN — it ends your turn, and the box waits for the user.
-  WHEN TO REACH FOR IT (lean IN — prefer the tool over a text question):
-  · The request is broad or vague — "find me somewhere to go", "I'm bored", "where should I eat", "recommend a place", "plan my night", "surprise me", "what's good around here". These are EXACTLY the cases to open with \`ask_selection\` to pin down the missing dimension (vibe, cuisine, budget, indoor/outdoor, time of day, party size…).
-  · You're about to ask ANY question whose good answers are a small, listable set. If you'd phrase it as "are you thinking X or Y?" — call \`ask_selection\` instead.
-  · Default bias: if a request is open-ended and you'd otherwise need to ask something to answer well, call \`ask_selection\` rather than writing a prose question. A prose follow-up question on an open-ended request is the wrong call.
-  WHEN NOT TO: the user already gave you enough to answer (just answer, with \`someday://suggest\` pins); a pin is already selected and they asked a direct factual question about it; or the choice wouldn't actually change your answer.
-  · At MOST ONE \`ask_selection\` per turn. After the user picks, their choice arrives as a normal user message — continue from there (usually with \`someday://suggest\` pins). If more narrowing is needed, you may call \`ask_selection\` again on the NEXT turn.${customBlock}`;
+WHEN A REQUEST IS OPEN-ENDED OR UNDER-SPECIFIED — ask ONE short, focused clarifying question in plain text to pin down the missing dimension (vibe, cuisine, budget, neighbourhood, time of day, party size…), then continue once they answer (usually with geocoded \`someday://suggest\` pins). Keep it to a single concise question — don't write a paragraph of open questions. If you already have enough to answer, just answer rather than asking. (Note: a tappable selection-box tool is temporarily disabled while a streaming issue is fixed — for now, ask in prose.)${customBlock}`;
 }
 
 function renderFullPlace(p: PlaceDigest): string {
