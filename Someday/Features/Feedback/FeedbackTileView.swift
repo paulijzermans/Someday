@@ -104,7 +104,7 @@ struct FeedbackTileView: View {
                 .focused($messageFocused)
         }
         .frame(minHeight: 100, maxHeight: 140)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .stroke(SomedayColors.grayMedium.opacity(0.25), lineWidth: 1)

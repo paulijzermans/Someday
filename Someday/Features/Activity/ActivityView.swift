@@ -293,7 +293,7 @@ struct ActivityView: View {
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity)
-                            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+                            .cleanTile(cornerRadius: 16)
                         }
                         .buttonStyle(.plain)
                     }
@@ -455,7 +455,7 @@ private struct PersonHeaderLink: View {
         Button {
             onSelect(user)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ActivityAvatar(user: user, size: avatarSize)
                 VStack(alignment: .leading, spacing: 1) {
                     caption
@@ -504,7 +504,7 @@ private struct VisitedTile: View {
             }
 
             Button(action: action) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Image(systemName: place.category.icon)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(SomedayColors.primary)
@@ -532,10 +532,10 @@ private struct VisitedTile: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-        // Defined thin edge — the modern crisp outline shared by the
-        // list tiles and cards across the app.
-        .somedayCardEdge(cornerRadius: 18)
+        // Clean white tile + soft shadow — the standard Someday tile
+        // language (see `cleanTile` / the Profile cards), replacing the
+        // old glass-over-map material + tan edge.
+        .cleanTile(cornerRadius: 18)
     }
 
     private func formatRating(_ value: Double) -> String {
@@ -586,8 +586,7 @@ private struct FollowTile: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
-        .somedayCardEdge(cornerRadius: 16)
+        .cleanTile(cornerRadius: 16)
     }
 }
 
@@ -606,7 +605,7 @@ private struct SharedListTile: View {
                 // Avatar + name route to the person's profile via the
                 // tile's own state-based navigation (no NavigationStack).
                 Button { onSelectPerson(friend) } label: {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(SomedayColors.amber.opacity(0.22))
@@ -645,8 +644,7 @@ private struct SharedListTile: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-        .somedayCardEdge(cornerRadius: 18)
+        .cleanTile(cornerRadius: 18)
     }
 }
 
@@ -713,8 +711,7 @@ struct PersonProfileView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 22)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .somedayCardEdge(cornerRadius: 22)
+        .cleanTile(cornerRadius: 22)
     }
 
     private var subscribeButton: some View {
@@ -788,8 +785,7 @@ struct PersonProfileView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
-        .somedayCardEdge(cornerRadius: 18)
+        .cleanTile(cornerRadius: 18)
     }
 
     private var emptyState: some View {
@@ -903,8 +899,7 @@ private struct FriendRequestTile: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
-        .somedayCardEdge(cornerRadius: 16)
+        .cleanTile(cornerRadius: 16)
     }
 
     /// Avatar tile — reuses the same async-image + initials fallback the

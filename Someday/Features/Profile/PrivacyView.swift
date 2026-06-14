@@ -35,6 +35,11 @@ struct PrivacyView: View {
                 blockedSection
                 dangerSection
             }
+            // Cream canvas so the Form's grouped sections read as the same
+            // clean white tiles as the Profile page (TileStyle.swift), not
+            // the stock grey grouped-list background.
+            .scrollContentBackground(.hidden)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Privacy")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -193,7 +198,7 @@ private struct BlockedAccountsView: View {
                 .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(SomedayColors.anthropicWhite.ignoresSafeArea())
         .navigationTitle("Blocked")
         .navigationBarTitleDisplayMode(.inline)
     }

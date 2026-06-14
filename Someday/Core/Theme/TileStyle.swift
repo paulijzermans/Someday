@@ -75,11 +75,15 @@ enum TileSize {
 extension Color {
     /// Someday's single source of truth for the "defined thin line" that
     /// frames every image box and every image-bearing card across the app.
-    /// A light, clearly-visible gray outline — the modern, crisp edge that
+    /// A light, clearly-visible outline — the modern, crisp edge that
     /// replaces the old heavier borders / white photo frames. Reference this
     /// instead of hand-rolling a one-off `Color.black.opacity(...)` so the
     /// whole app's edge treatment stays in lockstep.
-    static let somedayEdge = Color(.systemGray4)
+    ///
+    /// Repointed to Anthropic's warm tan `#B0AEA5` so every image-box edge
+    /// and card border across the app reads in the earthy Anthropic neutral
+    /// rather than the old cool `systemGray4`.
+    static let somedayEdge = SomedayColors.anthropicTan
 }
 
 extension View {
@@ -115,6 +119,46 @@ extension View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(Color.somedayEdge, lineWidth: lineWidth)
         )
+    }
+}
+
+// MARK: - Layered surfaces (cream canvas + clean white tiles)
+
+extension View {
+    /// The app's page canvas — Anthropic's warm off-white `#F0EEE6`. Use on
+    /// the *background* layer of a screen/sheet so the foreground cards (see
+    /// `cleanTile`) read as clean white tiles floating on a warm surface.
+    /// Ignores the safe area by default so the cream carries edge-to-edge.
+    func anthropicCanvas(ignoresSafeArea: Bool = true) -> some View {
+        self.background(
+            SomedayColors.anthropicWhite
+                .modifier(_MaybeIgnoreSafeArea(active: ignoresSafeArea))
+        )
+    }
+
+    /// A clean white foreground tile floating on the `anthropicCanvas`: pure
+    /// white fill, rounded corners, and a soft, light shadow that lifts it off
+    /// the cream. Use for the cards / rows / sheets that sit *in front of* the
+    /// page — the counterpart to `anthropicCanvas`. Replaces a bare
+    /// `.background(.white)` / `.background(anthropicWhite)` on foreground
+    /// elements so the whole app shares one tile language.
+    func cleanTile(cornerRadius: CGFloat = 22,
+                   shadowOpacity: Double = 0.06,
+                   shadowRadius: CGFloat = 16,
+                   shadowY: CGFloat = 8) -> some View {
+        self
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .shadow(color: .black.opacity(shadowOpacity), radius: shadowRadius, x: 0, y: shadowY)
+    }
+}
+
+/// Tiny helper so `anthropicCanvas` can conditionally apply `ignoresSafeArea`
+/// without two code paths at every call site.
+private struct _MaybeIgnoreSafeArea: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active { content.ignoresSafeArea() } else { content }
     }
 }
 

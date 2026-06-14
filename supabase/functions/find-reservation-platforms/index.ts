@@ -25,6 +25,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.30.0";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -139,16 +140,22 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const traceId = extractTraceId(req);
+  const log = createLogger("find-reservation-platforms", traceId);
+
   // -------- 1. Parse + validate input ---------------------------------------
   let body: RequestBody;
   try {
     body = await req.json();
   } catch {
+    await log.error("invalid JSON body", { event: "bad_request" });
     return json({ error: "Invalid JSON body" }, 400);
   }
   if (!body.name || typeof body.name !== "string") {
+    await log.error("name required", { event: "bad_request" });
     return json({ error: "name required" }, 400);
   }
+  await log.info("request_received", { event: "request_received", data: { name: body.name, category: body.category } });
 
   // -------- 2. Env --------------------------------------------------------
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -181,9 +188,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (error) throw error;
       if (data && isFresh(data.created_at)) {
-        console.log(
-          `Availability: CACHE HIT for "${body.name}" (key=${cacheKey})`,
-        );
+        await log.info("cache hit", { event: "cache_hit", data: { name: body.name, cacheKey } });
         // Fire-and-forget hit-count increment. We don't await it — the
         // user shouldn't wait on telemetry. Errors here are harmless.
         supabase
@@ -248,15 +253,13 @@ Deno.serve(async (req) => {
     }
     raw = finalText.text;
   } catch (err) {
-    console.error("Claude call failed:", err);
+    await log.error("claude call failed", { event: "llm_failed", data: { name: body.name, error: String(err) } });
     return json({ error: "AI lookup failed" }, 502);
   }
 
   // -------- 5. Parse Claude output ----------------------------------------
   const result = extractResult(raw, body.name);
-  console.log(
-    `Availability: AI MISS — ${result.platforms.length} platform(s) for "${body.name}"`,
-  );
+  await log.info("ai miss", { event: "completed", data: { name: body.name, platforms: result.platforms.length, cached: false } });
 
   // Extract per-provider venue IDs from the URLs Claude returned. Lets
   // the new `check-availability` function hit each provider's JSON API

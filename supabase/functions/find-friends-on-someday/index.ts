@@ -26,6 +26,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 interface RequestBody {
   emailHashes?: string[];
@@ -43,6 +44,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+
+  const traceId = extractTraceId(req);
+  const log = createLogger("find-friends-on-someday", traceId);
+  await log.info("request_received", { event: "request_received", data: { method: req.method } });
 
   // ----- Auth header passthrough so we know the requesting user -----
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -107,7 +112,7 @@ Deno.serve(async (req) => {
       .in("email_hash", emailHashes)
       .neq("id", user.id);
     if (error) {
-      console.error("email_hash query failed:", error);
+      await log.error("email_hash query failed", { event: "db_query_failed", userId: user.id, data: { column: "email_hash", error: String(error.message ?? error) } });
       return json({ error: "DB query failed" }, 500);
     }
     for (const row of data ?? []) {
@@ -127,7 +132,7 @@ Deno.serve(async (req) => {
       .in("phone_hash", phoneHashes)
       .neq("id", user.id);
     if (error) {
-      console.error("phone_hash query failed:", error);
+      await log.error("phone_hash query failed", { event: "db_query_failed", userId: user.id, data: { column: "phone_hash", error: String(error.message ?? error) } });
       return json({ error: "DB query failed" }, 500);
     }
     for (const row of data ?? []) {
@@ -142,9 +147,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  console.log(
-    `find-friends: user=${user.id} email=${emailHashes.length} phone=${phoneHashes.length} matches=${matchesById.size}`,
-  );
+  await log.info("matched", {
+    event: "completed",
+    userId: user.id,
+    data: { email: emailHashes.length, phone: phoneHashes.length, matches: matchesById.size },
+  });
 
   return json({ matches: Array.from(matchesById.values()) });
 });

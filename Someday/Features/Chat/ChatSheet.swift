@@ -38,7 +38,7 @@ struct ChatSheet: View {
                 }
                 inputBar
             }
-            .background(SomedayColors.grayLight.ignoresSafeArea())
+            .background(SomedayColors.anthropicWhite.ignoresSafeArea())
             .navigationTitle("Ask Someday")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -48,8 +48,9 @@ struct ChatSheet: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(.white)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
             }
@@ -132,11 +133,11 @@ struct ChatSheet: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.white)
+            .background(Color.white)
             .cornerRadius(14)
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -210,7 +211,7 @@ struct ChatSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.white)
+        .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 80)
@@ -227,11 +228,11 @@ struct ChatSheet: View {
                 .onSubmit { submit() }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(.white)
+                .background(Color.white)
                 .cornerRadius(18)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color(.systemGray5), lineWidth: 1)
+                        .stroke(SomedayColors.anthropicTan, lineWidth: 1)
                 )
 
             Button(action: submit) {
@@ -344,6 +345,11 @@ final class ChatViewModel {
                     }
                 case .textDelta(let delta):
                     messages[assistantIndex].content += delta
+                case .selection(let req):
+                    // The agent asked for structured input. Attach it to this
+                    // message so the bubble renders the interactive option
+                    // picker; the turn ends right after (we wait for the tap).
+                    messages[assistantIndex].selectionRequest = req
                 case .mutation(let m):
                     // Side-effecting change the server's agent decided to
                     // make. Apply locally + persist via the closure the

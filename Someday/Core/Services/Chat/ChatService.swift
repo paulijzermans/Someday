@@ -64,8 +64,32 @@ enum ChatEvent: Sendable, Equatable {
     /// Token(s) of the assistant's reply. Append to the current
     /// assistant message. Multiple deltas per response.
     case textDelta(String)
+    /// The agent wants the user to answer a structured question by tapping
+    /// from a small set of options (the in-chat **selection box**). Emitted
+    /// when the model calls the `ask_selection` tool — the server validates
+    /// the shape, so unlike the old embedded `someday://select` token this
+    /// can't arrive malformed. The turn ends after this event; the box waits
+    /// for the user's pick, which comes back as a normal user message.
+    case selection(ChatSelectionRequest)
     /// Stream complete. After this, no more events will arrive.
     case done
+}
+
+/// A structured request for the in-chat selection box, delivered over the
+/// SSE `selection` event (the `ask_selection` tool's validated input). This
+/// is the reliable replacement for parsing a `someday://select?…` token out
+/// of free text — the option labels arrive as real strings, already split.
+struct ChatSelectionRequest: Equatable, Sendable {
+    /// The question shown above the option buttons. Optional — a bare list
+    /// of options can stand on its own.
+    var prompt: String?
+    /// The tappable choices (2–6). Rendered in order.
+    var options: [String]
+    /// `true` → multi-select (toggle several, commit with the button);
+    /// `false` → single-select (tap one, submits instantly).
+    var multiSelect: Bool
+    /// Label for the multi-select commit button ("Next", "Show picks").
+    var submitLabel: String
 }
 
 /// Side-effecting actions the chat agent can request via SSE `mutation`
@@ -163,6 +187,20 @@ struct ChatMessage: Identifiable, Equatable, Codable, Sendable {
     /// Ignored when `attachedPlaceID` is nil. Pure UI state — excluded
     /// from the wire format.
     var attachmentKind: ChatAttachmentKind = .availability
+    /// Set once the user submits an in-chat **selection box** that this
+    /// assistant message asked for (the `someday://select?…` control). Holds
+    /// the option(s) they chose, which locks the box into a read-only
+    /// summary so it can't be re-submitted. Nil = not a selection prompt, or
+    /// awaiting the user's choice. Pure UI state — excluded from the wire
+    /// format (the choice also goes back to the model as a normal user turn).
+    var selectionChoice: [String]? = nil
+    /// The structured selection box this assistant message asks for, if any
+    /// (delivered via the `ask_selection` tool / SSE `selection` event). When
+    /// set, the bubble renders an interactive option-picker card instead of
+    /// (or alongside) its text. This is the reliable, tool-driven source —
+    /// preferred over parsing a `someday://select?…` token from `content`.
+    /// Pure UI state — excluded from the wire format.
+    var selectionRequest: ChatSelectionRequest? = nil
 
     enum CodingKeys: String, CodingKey { case role, content }
     init(
@@ -170,13 +208,17 @@ struct ChatMessage: Identifiable, Equatable, Codable, Sendable {
         content: String,
         steps: [ChatStep] = [],
         attachedPlaceID: String? = nil,
-        attachmentKind: ChatAttachmentKind = .availability
+        attachmentKind: ChatAttachmentKind = .availability,
+        selectionChoice: [String]? = nil,
+        selectionRequest: ChatSelectionRequest? = nil
     ) {
         self.role = role
         self.content = content
         self.steps = steps
         self.attachedPlaceID = attachedPlaceID
         self.attachmentKind = attachmentKind
+        self.selectionChoice = selectionChoice
+        self.selectionRequest = selectionRequest
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -186,6 +228,8 @@ struct ChatMessage: Identifiable, Equatable, Codable, Sendable {
         self.steps = []
         self.attachedPlaceID = nil
         self.attachmentKind = .availability
+        self.selectionChoice = nil
+        self.selectionRequest = nil
     }
 }
 
@@ -562,6 +606,10 @@ struct MockChatService: ChatService {
                 // the create_itinerary flow is exercised in demo mode /
                 // previews exactly like the live agent would drive it.
                 var mockMutation: ChatMutation?
+                // Optional selection box the mock emits, so the structured
+                // `ask_selection` flow is exercised in demo mode / previews
+                // exactly like the live agent's tool call would drive it.
+                var mockSelection: ChatSelectionRequest?
 
                 if last.contains("plan") || last.contains("itinerary") || last.contains("route")
                     || (last.contains("day") && context.myPlaces.count >= 2) {
@@ -592,6 +640,22 @@ struct MockChatService: ChatService {
                     } else {
                         reply = "Save a couple more places and I can string them into a day for you."
                     }
+                } else if last.contains("recommend") || last.contains("surprise")
+                            || last.contains("vibe") || last.contains("mood")
+                            || last.contains("suggest something") {
+                    // Demo of the in-chat SELECTION BOX. Rather than guess,
+                    // the assistant asks a structured question and lets the
+                    // user tap their answer. Delivered as a structured
+                    // `.selection` event (the same shape the live agent's
+                    // `ask_selection` tool emits) — no token parsing, so it
+                    // can't arrive malformed.
+                    reply = "Happy to help you find something!"
+                    mockSelection = ChatSelectionRequest(
+                        prompt: "What kind of vibe are you after?",
+                        options: ["Cozy & quiet", "Lively & social", "Outdoors", "Hidden gem", "Great for groups"],
+                        multiSelect: true,
+                        submitLabel: "Show me picks"
+                    )
                 } else if last.contains("how many") || last.contains("count") {
                     reply = "You've saved \(context.myPlaces.count) places, organised into \(context.lists.count) list(s)."
                 } else if last.contains("coffee") {
@@ -636,6 +700,11 @@ struct MockChatService: ChatService {
                     for chunk in chunks {
                         continuation.yield(.textDelta(chunk + " "))
                         try await Task.sleep(for: .milliseconds(40))
+                    }
+                    // Structured selection box, after the lead-in text — the
+                    // box renders as a standalone card under the bubble.
+                    if let mockSelection {
+                        continuation.yield(.selection(mockSelection))
                     }
                     continuation.yield(.done)
                     continuation.finish()
@@ -753,8 +822,23 @@ struct SupabaseChatService: ChatService {
                     }
                     req.httpBody = try JSONEncoder().encode(Body(messages: history, context: context))
 
+                    // Mint a trace id for this chat turn and propagate it via
+                    // X-Trace-Id so the `chat` function (and anything it calls)
+                    // logs into `debug_log` under the same id. A matching iOS
+                    // breadcrumb lands first, so a stalled turn reads as
+                    // "ios chat_send → chat request_received → (no completion)".
+                    let trace = Trace.start()
+                    trace.inject(into: &req)
+                    AppLogger.chat.info("chat send trace=\(trace.id, privacy: .public) messages=\(history.count, privacy: .public)")
+                    Observability.breadcrumb(
+                        "chat_send",
+                        trace: trace,
+                        message: "POST /functions/v1/chat",
+                        data: ["messages": String(history.count)]
+                    )
+
                     #if DEBUG
-                    print("[SupabaseChatService] POST \(url.absoluteString)")
+                    print("[SupabaseChatService] POST \(url.absoluteString) trace=\(trace.id)")
                     print("[SupabaseChatService] auth bearer prefix=\(bearer.prefix(20))…")
                     #endif
 
@@ -952,6 +1036,29 @@ struct SupabaseChatService: ChatService {
             default:
                 return nil
             }
+        case "selection":
+            // Server payload (matches the `ask_selection` emit in
+            // chat/index.ts): { prompt?: string, options: string[],
+            // multi: bool, submitLabel: string }. A box needs ≥2 options to
+            // be worth rendering; anything malformed yields nil (ignored).
+            struct Payload: Decodable {
+                let prompt: String?
+                let options: [String]
+                let multi: Bool?
+                let submitLabel: String?
+            }
+            guard let p = try? JSONDecoder().decode(Payload.self, from: bytes) else { return nil }
+            let options = p.options
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard options.count >= 2 else { return nil }
+            let trimmedPrompt = p.prompt?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .selection(ChatSelectionRequest(
+                prompt: (trimmedPrompt?.isEmpty == false) ? trimmedPrompt : nil,
+                options: options,
+                multiSelect: p.multi ?? false,
+                submitLabel: (p.submitLabel?.isEmpty == false) ? p.submitLabel! : "Next"
+            ))
         case "done":
             return .done
         case "error":

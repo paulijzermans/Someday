@@ -1040,11 +1040,11 @@ struct ChatAvailabilityCardView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+                .stroke(SomedayColors.anthropicTan, lineWidth: 1)
         )
     }
 
@@ -1072,11 +1072,11 @@ struct ChatAvailabilityCardView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+                .stroke(SomedayColors.anthropicTan, lineWidth: 1)
         )
     }
 
@@ -1155,7 +1155,7 @@ struct ChatPlacePeekCard: View {
                 .photoTileEdge(cornerRadius: 18)
             footer
         }
-        .background(Color.white)
+        .background(SomedayColors.anthropicWhite)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         // The card carries the same defined thin edge as the hero photo
         // inside it — the whole image-bearing surface shares one modern

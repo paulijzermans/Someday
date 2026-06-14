@@ -72,7 +72,7 @@ struct FriendsListView: View {
                 }
                 .padding(16)
             }
-            .background(SomedayColors.grayLight)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Friends")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -82,8 +82,9 @@ struct FriendsListView: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(SomedayColors.grayLight)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -252,9 +253,7 @@ struct FriendTile: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(.white)
-        .cornerRadius(16)
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .cleanTile(cornerRadius: 16)
         .onChange(of: isExpanded) { _, expanded in
             if !expanded { selectedList = nil }
         }
@@ -308,7 +307,7 @@ struct ListPill: View {
                 .cornerRadius(20)
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(isSelected ? Color.clear : Color(.systemGray4), lineWidth: 1)
+                        .stroke(isSelected ? Color.clear : SomedayColors.anthropicTan, lineWidth: 1)
                 )
         }
     }

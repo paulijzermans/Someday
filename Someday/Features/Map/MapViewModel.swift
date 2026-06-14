@@ -11,6 +11,14 @@ final class MapViewModel {
     /// pin is visually obvious behind/below the chat panel. Cleared on
     /// any deliberate navigation that opens a card or changes context.
     var peekHighlightPlaceID: String?
+    /// Saved pin currently in long-press "delete mode" — the iPhone
+    /// home-screen jiggle idiom applied to map pins. When set, the
+    /// matching pin wiggles and shows a red × badge in its top-right
+    /// corner; tapping the badge deletes the pin, tapping anywhere else
+    /// on the map clears this back to normal. Driven by the long-press
+    /// gesture in `ClusteredMapView`. Only one pin is ever "armed" at a
+    /// time, so a single id (not a set) is enough.
+    var deletingPlaceID: String?
     var searchText = ""
     var searchResults: [LocationSearchResult] = []
     var isSearching = false
@@ -306,6 +314,9 @@ final class MapViewModel {
     /// Contact-discovery + friend-request inbox. Used by the Activity tab
     /// to surface incoming requests with Accept/Reject affordances.
     private let contactsService: ContactsServiceProtocol
+    /// Per-user usage accounting. We bump the import counter here after a
+    /// successful import so Settings → Plan can show lifetime totals.
+    private let usageService: UsageServiceProtocol
     private let userID: String
 
     init(services: ServiceContainer, userID: String) {
@@ -317,6 +328,7 @@ final class MapViewModel {
         self.reservationCheckService = services.reservationCheck
         self.listService = services.lists
         self.contactsService = services.contacts
+        self.usageService = services.usage
         self.userID = userID
 
         // Re-hydrate any still-living suggestions from a previous run and
@@ -1522,6 +1534,11 @@ final class MapViewModel {
             Haptics.soft()
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
+
+        // Record the import for per-user usage accounting (Settings → Plan).
+        // Best-effort and fire-and-forget — the service swallows its own
+        // errors, so this never affects the import the user just made.
+        await usageService.recordImport(count: toAdd.count)
     }
 
     /// Routes the Maps URL through the extraction service. Google Maps
@@ -2164,6 +2181,42 @@ final class MapViewModel {
         }
     }
 
+    // MARK: - Long-press "delete mode" for map pins
+    //
+    // The iPhone home-screen idiom, applied to saved pins: long-press a
+    // pin to "arm" it for deletion (a red × badge appears and the pin
+    // wiggles), tap the × to delete, or tap anywhere else to disarm.
+    // The gesture detection + badge rendering live in `ClusteredMapView`
+    // (it owns the MapKit surface); these three methods are the state
+    // transitions it calls into.
+
+    /// Long-press landed on `place` — arm it for deletion. Fires a heavy
+    /// tap so the mode entry has the same tactile "picked it up" feel as
+    /// the home-screen jiggle. Idempotent for the already-armed pin.
+    @MainActor
+    func beginPinDeleteMode(for place: Place) {
+        guard deletingPlaceID != place.id else { return }
+        Haptics.heavy()
+        withAnimation(.easeOut(duration: 0.18)) { deletingPlaceID = place.id }
+    }
+
+    /// User tapped somewhere other than the × badge — disarm and return
+    /// the map to normal. No-op when nothing is armed.
+    @MainActor
+    func cancelPinDeleteMode() {
+        guard deletingPlaceID != nil else { return }
+        withAnimation(.easeOut(duration: 0.18)) { deletingPlaceID = nil }
+    }
+
+    /// User tapped the red × on an armed pin — disarm and delete it.
+    /// Reuses the same choreographed removal + fire-and-forget server
+    /// delete the chat's `delete_place` path already goes through.
+    @MainActor
+    func confirmPinDeletion(placeID: String) async {
+        deletingPlaceID = nil
+        await deletePlaceFromChat(placeID: placeID)
+    }
+
     /// Choreographed local removal of saved pins from the map. Before a
     /// pin disappears the user should see *which* pins are going — so we
     /// (1) zoom the camera to frame every doomed pin, (2) hold briefly so
@@ -2293,6 +2346,39 @@ final class MapViewModel {
             customLists.insert(moving, at: adjustedTarget)
         }
         Haptics.tap()
+    }
+
+    /// Replace the custom-list ordering wholesale with `orderedNames`.
+    /// The Lists grid's home-screen jiggle mode reflows tiles *live* as
+    /// the finger crosses slots (iPhone Home Screen reflow), so by the
+    /// time the user lifts their finger the final order is already known
+    /// as a complete sequence of names — handing back the whole order is
+    /// simpler and less error-prone than replaying a "move before"
+    /// instruction. Names are matched case-sensitively against the
+    /// current lists; any list the caller omits is appended at the end
+    /// (defensive — the grid always passes a complete order). Local-only,
+    /// same caveat as `reorderCustomList`: there's no `position` column on
+    /// the `lists` table yet, so the order is per-session.
+    @MainActor
+    func setCustomListOrder(_ orderedNames: [String]) {
+        var reordered: [CustomList] = []
+        var seen = Set<String>()
+        for name in orderedNames {
+            guard !seen.contains(name),
+                  let list = customLists.first(where: { $0.name == name }) else { continue }
+            reordered.append(list)
+            seen.insert(name)
+        }
+        // Preserve any lists the caller didn't mention (shouldn't happen,
+        // but keeps the array complete rather than silently dropping one).
+        for list in customLists where !seen.contains(list.name) {
+            reordered.append(list)
+        }
+        guard reordered.count == customLists.count,
+              reordered.map(\.id) != customLists.map(\.id) else { return }
+        withAnimation(SomedayAnimations.tile) {
+            customLists = reordered
+        }
     }
 
     /// Append a place to a custom list by name. Creates the list if it

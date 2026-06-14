@@ -96,20 +96,29 @@ struct AuthView: View {
 
     private var hero: some View {
         VStack(spacing: 12) {
+            // Small transparent hot-air-balloon mark sitting directly
+            // above the wordmark — a literal brand badge crowning the
+            // "Someday" title. Uses the pixelated cut-out asset so it
+            // floats over the blue gradient cleanly with a playful,
+            // retro feel.
+            Image("airballoonPixelated")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 72)
+                .allowsHitTesting(false)
             // Old mappin badge dropped — the centred balloon image
             // behind this stack is the brand mark now, and a second
             // square pin under "Someday" was visual noise.
+            //
+            // Upright wordmark: the whole word in the brand (non-italic)
+            // face. We deliberately don't use `SomedayFonts.wordmark`
+            // here — that slants the "some" half — because the welcome
+            // hero reads cleaner straight. The slogan beneath was also
+            // dropped to keep the hero to just the mark + wordmark.
             Text("Someday")
                 .font(SomedayFonts.brand(size: 52))
                 .foregroundColor(SomedayColors.butter)
                 .tracking(1)
-            // Slogan — used here, on the splash, on the Profile footer.
-            // Short, definitional, and the line we want users to hear in
-            // their head when they think about the product.
-            Text("Save for Someday")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundColor(SomedayColors.butter.opacity(0.85))
-                .multilineTextAlignment(.center)
         }
     }
 

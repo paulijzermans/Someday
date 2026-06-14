@@ -54,7 +54,7 @@ struct ReservationView: View {
             }
             .padding(16)
         }
-        .background(SomedayColors.grayLight)
+        .background(SomedayColors.anthropicWhite)
         .navigationTitle("Reservation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -64,8 +64,9 @@ struct ReservationView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(SomedayColors.charcoal)
                         .frame(width: 32, height: 32)
-                        .background(SomedayColors.grayLight)
+                        .background(Color.white)
                         .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                 }
             }
         }
@@ -96,8 +97,7 @@ struct ReservationView: View {
             Spacer()
         }
         .padding(16)
-        .background(.white)
-        .cornerRadius(16)
+        .cleanTile(cornerRadius: 16)
     }
 
     private var dateSection: some View {
@@ -110,8 +110,7 @@ struct ReservationView: View {
                 .tint(SomedayColors.primary)
         }
         .padding(16)
-        .background(.white)
-        .cornerRadius(16)
+        .cleanTile(cornerRadius: 16)
     }
 
     private var timeSection: some View {
@@ -125,8 +124,7 @@ struct ReservationView: View {
                 .tint(SomedayColors.primary)
         }
         .padding(16)
-        .background(.white)
-        .cornerRadius(16)
+        .cleanTile(cornerRadius: 16)
     }
 
     private var partySizeSection: some View {
@@ -150,8 +148,7 @@ struct ReservationView: View {
             .cornerRadius(12)
         }
         .padding(16)
-        .background(.white)
-        .cornerRadius(16)
+        .cleanTile(cornerRadius: 16)
     }
 
     private var notesSection: some View {
@@ -166,8 +163,7 @@ struct ReservationView: View {
                 .cornerRadius(12)
         }
         .padding(16)
-        .background(.white)
-        .cornerRadius(16)
+        .cleanTile(cornerRadius: 16)
     }
 
     private var confirmationView: some View {
@@ -199,8 +195,7 @@ struct ReservationView: View {
                 confirmationRow(icon: "person.2", label: "\(partySize) \(partySize == 1 ? "person" : "people")")
             }
             .padding(20)
-            .background(.white)
-            .cornerRadius(16)
+            .cleanTile(cornerRadius: 16)
             .padding(.horizontal, 24)
 
             Spacer()
@@ -217,7 +212,7 @@ struct ReservationView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 40)
         }
-        .background(SomedayColors.grayLight)
+        .background(SomedayColors.anthropicWhite)
         .navigationBarBackButtonHidden()
     }
 

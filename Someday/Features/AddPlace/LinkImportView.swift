@@ -52,7 +52,7 @@ struct LinkImportView: View {
                 Spacer()
             }
             .padding(20)
-            .background(SomedayColors.grayLight)
+            .background(SomedayColors.anthropicWhite)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -61,8 +61,9 @@ struct LinkImportView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(.white)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
             }
@@ -122,11 +123,11 @@ struct LinkImportView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(.white)
+            .background(Color.white)
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
         }
     }

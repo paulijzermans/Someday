@@ -525,7 +525,7 @@ struct ImportSummaryCardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(14)
         .shadow(color: .black.opacity(0.04), radius: 4, y: 1)
     }

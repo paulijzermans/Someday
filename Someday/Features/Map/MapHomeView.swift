@@ -615,7 +615,7 @@ struct MapHomeView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(.white)
+            .background(SomedayColors.anthropicWhite)
             .cornerRadius(12)
         }
         .buttonStyle(.plain)
@@ -1033,7 +1033,17 @@ struct MapHomeView: View {
             // the Discover All carousel). Either ID may be nil, both
             // may be nil — in which case nothing breathes.
             breathingPlaceID: vm.selectedPlace?.id ?? vm.peekHighlightPlaceID,
-            breathingSuggestionID: vm.currentSuggestionID
+            breathingSuggestionID: vm.currentSuggestionID,
+            // Long-press a saved pin to "arm" it for deletion — the
+            // iPhone home-screen jiggle idiom. The armed pin wiggles and
+            // shows a red × badge; tapping it deletes, tapping anywhere
+            // else disarms.
+            deletingPlaceID: vm.deletingPlaceID,
+            onLongPressPlace: { vm.beginPinDeleteMode(for: $0) },
+            onRequestDeletePlace: { place in
+                Task { await vm.confirmPinDeletion(placeID: place.id) }
+            },
+            onCancelDeleteMode: { vm.cancelPinDeleteMode() }
         )
         .ignoresSafeArea()
         // Resolve the current city name whenever the viewport settles.
@@ -1677,6 +1687,26 @@ struct MapHomeView: View {
                             // deliberate jump out of the chat to the pin.
                             onOpenPeekOnMap: { place in
                                 openPeekOnMap(place)
+                            },
+                            // A reply-style quick chip (follow-up / Yes/No)
+                            // was tapped — push it into the chat as the
+                            // user's next turn, same path as typing + send.
+                            onQuickReply: { text in
+                                guard !chat.isThinking else { return }
+                                chat.inputText = text
+                                Task { await chat.send() }
+                            },
+                            // The user answered an in-chat selection box.
+                            // Lock that message's box to a read-only summary,
+                            // then send the choice as the next user turn so
+                            // the AI continues with the answer in hand.
+                            onSelectionSubmit: { choice in
+                                guard !chat.isThinking, !choice.isEmpty else { return }
+                                if let i = chat.messages.firstIndex(where: { $0.id == msg.id }) {
+                                    chat.messages[i].selectionChoice = choice
+                                }
+                                chat.inputText = choice.joined(separator: ", ")
+                                Task { await chat.send() }
                             }
                         )
                         .id(msg.id)
@@ -1823,7 +1853,7 @@ struct MapHomeView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.white)
+                .background(SomedayColors.anthropicWhite)
                 .cornerRadius(16)
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
                 .padding(.horizontal, 16)
@@ -1881,10 +1911,12 @@ struct MapHomeView: View {
                     }
                 }
 
-                // 2) Placeholder — reserved for a future surface. Disabled
-                //    so it reads as "coming soon" rather than a dead tap.
+                // 2) Explore — reserved for the upcoming discovery surface.
+                //    Still disabled so it reads as "coming soon" rather than
+                //    a dead tap; the compass glyph previews what's coming.
                 GlassTabIcon(
-                    icon: "square.grid.2x2",
+                    icon: "safari",
+                    activeIcon: "safari.fill",
                     isEnabled: false
                 ) {}
 
@@ -1910,10 +1942,11 @@ struct MapHomeView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                // 4) Lists.
+                // 4) Lists — the grid glyph mirrors the grid of list tiles
+                //    the overlay opens into.
                 GlassTabIcon(
-                    icon: "square.stack",
-                    activeIcon: "square.stack.fill",
+                    icon: "square.grid.2x2",
+                    activeIcon: "square.grid.2x2.fill",
                     isActive: vm.showLists
                 ) {
                     withAnimation(SomedayAnimations.tile) {
@@ -2295,10 +2328,11 @@ struct MapHomeView: View {
                     // menu. Same parent-hosted alert pattern as merge.
                     pendingDelete = PendingDeleteRequest(name: name)
                 },
-                onReorderRequested: { source, target in
-                    // Edit-mode drag-and-drop reorder. Optimistic local
-                    // shuffle (no alert) — same UX as iPhone Home Screen.
-                    vm.reorderCustomList(named: source, beforeName: target)
+                onReorderCommit: { orderedNames in
+                    // Edit-mode home-screen reorder. The grid reflowed
+                    // tiles live during the drag, so it hands back the
+                    // full final order; we apply it wholesale (no alert).
+                    vm.setCustomListOrder(orderedNames)
                 },
                 // Membership-editor mode — fed from the pin_tile's
                 // list-membership button (see `placeCardLayer`'s
@@ -2580,6 +2614,16 @@ private struct ChatBubbleView: View {
     /// attachment — the parent does the heavy-haptic collapse + recenter
     /// + open-card navigation.
     let onOpenPeekOnMap: (Place) -> Void
+    /// Fires when the user taps a *reply-style* quick-action chip (a
+    /// follow-up suggestion or a Yes/No answer). The parent pushes the
+    /// text into the chat and sends it as the user's next turn. Action-
+    /// style chips bypass this — they go straight through the `openURL`
+    /// bus like the inline links.
+    let onQuickReply: (String) -> Void
+    /// Fires when the user submits this message's in-chat selection box
+    /// (`someday://select?…`). Receives the chosen option(s); the parent
+    /// locks the box and sends the choice as the user's next turn.
+    let onSelectionSubmit: ([String]) -> Void
 
     @State private var stepsExpanded: Bool
 
@@ -2589,7 +2633,9 @@ private struct ChatBubbleView: View {
         vm: MapViewModel,
         onCheckTonightForAttachment: @escaping (Place) -> Void,
         onDiscoverAll: @escaping ([SuggestedPin]) -> Void,
-        onOpenPeekOnMap: @escaping (Place) -> Void
+        onOpenPeekOnMap: @escaping (Place) -> Void,
+        onQuickReply: @escaping (String) -> Void,
+        onSelectionSubmit: @escaping ([String]) -> Void
     ) {
         self.msg = msg
         self.isStreaming = isStreaming
@@ -2597,6 +2643,8 @@ private struct ChatBubbleView: View {
         self.onCheckTonightForAttachment = onCheckTonightForAttachment
         self.onDiscoverAll = onDiscoverAll
         self.onOpenPeekOnMap = onOpenPeekOnMap
+        self.onQuickReply = onQuickReply
+        self.onSelectionSubmit = onSelectionSubmit
         // Initial render is ALWAYS collapsed. While the stream is
         // live the bubble shows only the current step as a single
         // tappable row (expand on tap); once done it folds into a
@@ -2678,11 +2726,44 @@ private struct ChatBubbleView: View {
         msg.attachmentKind == .peek && attachedPlace != nil
     }
 
-    /// Whether the glass text bubble should render at all. A message that
-    /// is nothing but a peek card has no text/steps, so we skip the empty
-    /// glass bubble and show only the standalone card.
+    /// The interactive selection box this message asks for, if any.
+    ///
+    /// Preferred source is the structured `selectionRequest` delivered by the
+    /// `ask_selection` tool (validated server-side — can't be malformed). We
+    /// fall back to parsing a legacy `someday://select?…` token out of the
+    /// text only when no structured request is present, so older replies /
+    /// the mock token path still render. Token parsing waits for the stream
+    /// to finish so we never render against a half-arrived token; the
+    /// structured request arrives whole, so it's safe immediately.
+    private var selectionSpec: ChatSelectionSpec? {
+        guard msg.role == .assistant else { return nil }
+        if let req = msg.selectionRequest, req.options.count >= 2 {
+            return ChatSelectionSpec(
+                prompt: req.prompt,
+                options: req.options,
+                multiSelect: req.multiSelect,
+                submitLabel: req.submitLabel
+            )
+        }
+        guard !isStreaming else { return nil }
+        return ChatSelectionSpec.parse(from: msg.content)
+    }
+
+    /// The body text actually shown in the glass bubble — the raw content
+    /// with any legacy `someday://select?…` token stripped out (the question
+    /// lives in the box's header instead, so the URL must never leak into
+    /// view). The structured tool path puts nothing in `content`, so this is
+    /// a no-op there.
+    private var displayContent: String {
+        ChatSelectionSpec.strippedContent(from: msg.content)
+    }
+
+    /// Whether the glass text bubble should render at all. A message that is
+    /// nothing but a peek card or a bare selection box has no visible
+    /// text/steps, so we skip the empty glass bubble and show only the
+    /// standalone card.
     private var showTextBubble: Bool {
-        !msg.steps.isEmpty || !msg.content.isEmpty || msg.attachmentKind == .availability
+        !msg.steps.isEmpty || !displayContent.isEmpty || msg.attachmentKind == .availability
     }
 
     var body: some View {
@@ -2699,6 +2780,17 @@ private struct ChatBubbleView: View {
                         listHint: vm.displayedListName(for: place),
                         onOpenMap: { onOpenPeekOnMap(place) }
                     )
+                }
+                // Selection box — standalone interactive card, also OUTSIDE
+                // the glass bubble (its own chrome). The user taps to answer
+                // the question the assistant asked.
+                if let spec = selectionSpec {
+                    ChatSelectionBox(
+                        spec: spec,
+                        resolved: msg.selectionChoice,
+                        onSubmit: { onSelectionSubmit($0) }
+                    )
+                    .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: msg.role == .user ? .trailing : .leading)
@@ -2807,9 +2899,9 @@ private struct ChatBubbleView: View {
             // ---- Body text --------------------------------------
             // Inline flow layout: words + list pills + tappable links
             // all flow together with wrapping. See ChatMessageRenderer.swift.
-            if !msg.content.isEmpty {
+            if !displayContent.isEmpty {
                 ChatMessageBody(
-                    raw: msg.content,
+                    raw: displayContent,
                     textColor: msg.role == .user ? .white : SomedayColors.charcoal
                 )
             }
@@ -2841,6 +2933,22 @@ private struct ChatBubbleView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 2)
+                }
+            }
+
+            // ---- Quick-decision chips ---------------------------
+            // Tappable shortcuts under a finished reply: fire an action
+            // (drop a pin, plan the day, start a list), answer a Yes/No
+            // the bot asked, or send a common follow-up — all without
+            // typing. Derived client-side from the reply text; renders
+            // nothing when no chip applies. Post-stream only so we don't
+            // offer actions against a half-written message. Suppressed when
+            // a selection box is present — that box IS the pending decision.
+            if msg.role == .assistant, !isStreaming, selectionSpec == nil {
+                let quickActions = ChatQuickAction.actions(for: msg)
+                if !quickActions.isEmpty {
+                    ChatQuickActionsRow(actions: quickActions, onReply: onQuickReply)
+                        .padding(.top, 2)
                 }
             }
 
@@ -2882,6 +2990,554 @@ private struct ChatBubbleView: View {
             }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
+    }
+}
+
+// =============================================================================
+// Chat quick actions — tappable chips under an assistant reply
+// =============================================================================
+//
+// Lets the user make a fast decision without typing. Three flavours, all
+// derived CLIENT-SIDE from the finished reply's text (no backend round-trip,
+// ships the moment we build):
+//
+//   • action chips  — fire a `someday://` command through the SAME openURL
+//     bus the inline links use (drop a suggested pin, show on map, plan the
+//     day, start a list). The view-layer half lives in `MapHomeView.perform`.
+//   • follow-ups    — send a canned next question as the user's turn (e.g.
+//     "Plan a day with these places") when the reply offered 2+ venues.
+//   • Yes/No        — when the bot ends on a binary question ("Want me to add
+//     all five?"), surface [Yes] [No] instead of making the user type it.
+//
+// The builder is intentionally conservative: it only emits chips when there's
+// a clear signal, and returns [] otherwise so the row simply doesn't render.
+struct ChatQuickAction: Identifiable {
+    /// What a tap does. `.action` reuses the `someday://` action bus; `.reply`
+    /// sends `text` as the user's next message.
+    enum Kind {
+        case action(URL)
+        case reply(String)
+    }
+    let id = UUID()
+    let label: String
+    let icon: String          // SF Symbol
+    let kind: Kind
+    /// Lime-filled (the dominant CTA look) vs. a primary-tinted outline.
+    /// Reserved for the single most likely next step in the row.
+    var prominent: Bool = false
+
+    /// Derive the quick-decision chips for a finished assistant reply.
+    /// Returns [] for user messages, empty content, or when nothing useful
+    /// applies — the caller renders nothing in that case.
+    static func actions(for msg: ChatMessage) -> [ChatQuickAction] {
+        guard msg.role == .assistant, !msg.content.isEmpty else { return [] }
+        let text = msg.content
+
+        // 1) A pending yes/no question is a clean binary decision — offer it
+        //    on its own so the row stays unambiguous.
+        if let q = trailingQuestion(in: text), isYesNoQuestion(q) {
+            return [
+                ChatQuickAction(label: "Yes", icon: "checkmark",
+                                kind: .reply("Yes, please"), prominent: true),
+                ChatQuickAction(label: "No", icon: "xmark",
+                                kind: .reply("No, thanks"))
+            ]
+        }
+
+        var chips: [ChatQuickAction] = []
+        let suggestions = ChatBubbleView.extractSuggestions(from: text)
+
+        // 2) Action chips from embedded someday:// commands. Surfacing the
+        //    key action as a prominent chip beats an easy-to-miss inline link.
+        if let plan = firstCommandURL(in: text, host: "plan") {
+            chips.append(.init(label: "See the whole day", icon: "map.fill",
+                               kind: .action(plan), prominent: true))
+        }
+        // Exactly one suggestion → a direct "show it" chip. (2+ are already
+        // served by the "Discover all" carousel CTA above.)
+        if suggestions.count == 1,
+           let url = firstCommandURL(in: text, host: "suggest") {
+            chips.append(.init(label: "Show \(suggestions[0].name)",
+                               icon: "mappin.and.ellipse",
+                               kind: .action(url), prominent: chips.isEmpty))
+        }
+        if let create = firstCommandURL(in: text, host: "create-list"),
+           let name = create.queryValue("name") {
+            chips.append(.init(label: "Start “\(name)” list",
+                               icon: "folder.badge.plus", kind: .action(create)))
+        }
+        if let show = firstCommandURL(in: text, host: "show") {
+            chips.append(.init(label: "Show on map", icon: "scope",
+                               kind: .action(show)))
+        }
+
+        // 3) Follow-up suggestions when the reply offered several venues —
+        //    the most common "what next?" turns, pre-typed.
+        if suggestions.count >= 2 {
+            chips.append(.init(label: "Plan a day with these", icon: "calendar",
+                               kind: .reply("Plan a day with these places")))
+            chips.append(.init(label: "Cheaper options", icon: "tag",
+                               kind: .reply("Show me cheaper options")))
+        }
+
+        // Cap so the row never crowds the bubble.
+        return Array(chips.prefix(4))
+    }
+
+    // MARK: Heuristics
+
+    /// The final question in `text` (the sentence ending in the trailing
+    /// "?"), or nil when the reply doesn't end on a question.
+    private static func trailingQuestion(in text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.hasSuffix("?") else { return nil }
+        let body = String(t.dropLast())   // drop the trailing "?"
+        if let idx = body.lastIndex(where: { ".!?\n".contains($0) }) {
+            return String(body[body.index(after: idx)...])
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return body.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// True for binary phrasings ("want me to…", "shall I…", "should I…")
+    /// — NOT open-ended questions ("where would you like to go?"), which a
+    /// Yes/No pair would answer nonsensically.
+    private static func isYesNoQuestion(_ question: String) -> Bool {
+        let q = question.lowercased()
+        let triggers = [
+            "want me to", "shall i", "should i", "shall we", "would you like",
+            "want to", "do you want", "sound good", "ok to", "okay to",
+            "like me to", "can i go ahead", "ready to", "should we"
+        ]
+        return triggers.contains { q.contains($0) }
+    }
+
+    /// First `someday://<host>…` command URL embedded in `text`. Mirrors
+    /// `ChatBubbleView.extractSuggestions`' loose scan: any whitespace or
+    /// markdown delimiter (`)`, `]`, `"`) ends the URL, so links wrapped as
+    /// `[label](someday://…)` parse cleanly.
+    private static func firstCommandURL(in text: String, host: String) -> URL? {
+        let needle = "someday://\(host)"
+        let scanner = Scanner(string: text)
+        scanner.charactersToBeSkipped = nil
+        while !scanner.isAtEnd {
+            _ = scanner.scanUpToString(needle)
+            guard !scanner.isAtEnd else { break }
+            let stop = CharacterSet.whitespacesAndNewlines
+                .union(CharacterSet(charactersIn: ")]\""))
+            guard let raw = scanner.scanUpToCharacters(from: stop) else { break }
+            if let url = URL(string: String(raw)), url.host == host {
+                return url
+            }
+        }
+        return nil
+    }
+}
+
+private extension URL {
+    /// Convenience: value of the first query item named `name`, percent-
+    /// decoded. Nil when absent.
+    func queryValue(_ name: String) -> String? {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == name })?.value?
+            .removingPercentEncoding
+    }
+}
+
+/// Quick-decision chips beneath an assistant reply, laid out in a wrapping
+/// flow so every chip stays visible (no hidden horizontal scroll). Action
+/// chips fire through the chat's `openURL` bus (the same one the inline
+/// links use); reply chips call back into the chat's send path.
+private struct ChatQuickActionsRow: View {
+    let actions: [ChatQuickAction]
+    let onReply: (String) -> Void
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        FlowLayout(spacing: 8, lineSpacing: 8) {
+            ForEach(actions) { action in
+                ChatQuickActionChip(action: action) {
+                    Haptics.tap()
+                    switch action.kind {
+                    case .action(let url): openURL(url)
+                    case .reply(let text): onReply(text)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A single quick-action chip. Two looks, tuned to the app's CTA language:
+///   • prominent — lime fill + charcoal text + a soft lime glow. Reserved
+///     for the single most-likely next step (the primary action / "Yes").
+///   • secondary — a crisp white capsule with the defined `somedayEdge`
+///     hairline and primary-blue text, so it reads as a real button on the
+///     glass bubble rather than a faint translucent tint.
+/// Both press-scale for tactile feedback.
+private struct ChatQuickActionChip: View {
+    let action: ChatQuickAction
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 12, weight: .bold))
+                Text(action.label)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundColor(action.prominent ? SomedayColors.charcoal : SomedayColors.primary)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background {
+                Capsule().fill(action.prominent ? SomedayColors.lime : Color.white)
+            }
+            .overlay {
+                if !action.prominent {
+                    Capsule().strokeBorder(Color.somedayEdge, lineWidth: 1)
+                }
+            }
+            .shadow(
+                color: action.prominent ? SomedayColors.lime.opacity(0.40) : .black.opacity(0.06),
+                radius: action.prominent ? 6 : 3,
+                y: 1.5
+            )
+        }
+        .buttonStyle(PressableChipStyle())
+    }
+}
+
+/// Spring scale-down on press — makes the chips feel physical instead of
+/// flat. Shared by every quick-action chip.
+private struct PressableChipStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+/// Minimal left-to-right wrapping layout: lays subviews out in rows,
+/// breaking to the next line when the current row runs out of width. Used
+/// for the quick-action chips so they wrap cleanly instead of scrolling off
+/// the edge of the bubble.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                // Wrap to a new row.
+                totalHeight += rowHeight + lineSpacing
+                totalWidth = max(totalWidth, rowWidth)
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+        totalHeight += rowHeight
+        totalWidth = max(totalWidth, rowWidth)
+        return CGSize(width: min(totalWidth, maxWidth), height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                // Wrap.
+                x = bounds.minX
+                y += rowHeight + lineSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+// =============================================================================
+// Chat selection box — the assistant asks the user to pick from options
+// =============================================================================
+//
+// When the AI needs more information to answer well, instead of writing a
+// question and hoping the user types a clean reply, it embeds a
+// `someday://select?…` token in its message. iOS parses that into an
+// interactive bubble: a card of tappable options the user chooses from.
+//
+//   • single-select (`multi=0`) — tapping an option submits immediately
+//     (one decision, one tap).
+//   • multi-select  (`multi=1`) — options toggle; a "Next" CTA at the
+//     bottom sends every chosen option once the user is done.
+//
+// On submit the choice is sent back to the model as a normal user turn (so
+// the conversation history stays clean) AND the box locks into a read-only
+// summary so it can't be answered twice.
+//
+// Wire format (all values percent-encoded):
+//   someday://select?prompt=<question>&multi=<0|1>&submit=<label>
+//                    &option=<A>&option=<B>&option=<C>…
+//
+// Embedding it in the reply text means ZERO streaming-protocol change — the
+// existing `.textDelta` channel carries it, and the live agent emits the
+// same token (see the chat Edge Function's system prompt).
+struct ChatSelectionSpec: Equatable {
+    let prompt: String?
+    let options: [String]
+    let multiSelect: Bool
+    let submitLabel: String
+
+    /// Parse the first `someday://select?…` command in `text`. Returns nil
+    /// when absent or malformed (a selection box needs ≥2 options to be
+    /// worth rendering).
+    ///
+    /// Deliberately tolerant: the live model is unreliable about
+    /// percent-encoding, so we DON'T route through `URL`/`URLComponents`
+    /// (which truncate at the first un-encoded space). Instead we grab the
+    /// token's query string up to end-of-line and split it by hand,
+    /// decoding each value whether or not it was encoded.
+    static func parse(from text: String) -> ChatSelectionSpec? {
+        guard let query = firstSelectQuery(in: text) else { return nil }
+
+        var prompt: String? = nil
+        var options: [String] = []
+        var multi = false
+        var submit = "Next"
+
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard kv.count == 2 else { continue }
+            let key = kv[0].trimmingCharacters(in: .whitespaces)
+            let value = decode(String(kv[1]))
+            switch key {
+            case "prompt":
+                if !value.isEmpty { prompt = value }
+            case "option":
+                if !value.trimmingCharacters(in: .whitespaces).isEmpty { options.append(value) }
+            case "multi":
+                let v = value.lowercased()
+                multi = v == "1" || v == "true" || v == "yes"
+            case "submit":
+                if !value.isEmpty { submit = value }
+            default:
+                break
+            }
+        }
+
+        guard options.count >= 2 else { return nil }
+        return ChatSelectionSpec(
+            prompt: prompt,
+            options: options,
+            multiSelect: multi,
+            submitLabel: submit.isEmpty ? "Next" : submit
+        )
+    }
+
+    /// `text` with the `someday://select?…` token (and any markdown link
+    /// wrapping it) removed, so the visible bubble never shows the raw URL.
+    /// Trimmed — a message that was nothing but the token becomes empty.
+    static func strippedContent(from text: String) -> String {
+        var out = text
+        // First a markdown-wrapped link `[label](someday://select…)`.
+        while let r = out.range(of: "\\[[^\\]]*\\]\\(someday://select[^)]*\\)",
+                                options: .regularExpression) {
+            out.removeSubrange(r)
+        }
+        // Then any bare token — remove from `someday://select` to the end of
+        // its line (NOT just to the first space: un-encoded option labels
+        // contain spaces, so a `\S*` strip would leak the tail into view).
+        while let start = out.range(of: "someday://select") {
+            let lineEnd = out[start.lowerBound...]
+                .firstIndex(where: { $0 == "\n" || $0 == "\r" }) ?? out.endIndex
+            out.removeSubrange(start.lowerBound..<lineEnd)
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The raw query string after `someday://select?`, captured to the end of
+    /// the line and stripped of any trailing markdown `)`/quote. Nil when the
+    /// token is absent.
+    private static func firstSelectQuery(in text: String) -> String? {
+        guard let start = text.range(of: "someday://select?") else { return nil }
+        let tail = text[start.upperBound...]
+        let line = tail.prefix { $0 != "\n" && $0 != "\r" }
+        return String(line)
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ")]\"'"))
+    }
+
+    /// Percent-decode a value, also mapping `+` → space, but never failing:
+    /// an un-encoded label is returned as-is.
+    private static func decode(_ value: String) -> String {
+        let plusFixed = value.replacingOccurrences(of: "+", with: " ")
+        return plusFixed.removingPercentEncoding ?? plusFixed
+    }
+}
+
+/// The interactive selection-box bubble. A standalone card (its own chrome,
+/// rendered OUTSIDE the glass text bubble per the no-nested-tiles rule).
+private struct ChatSelectionBox: View {
+    let spec: ChatSelectionSpec
+    /// Non-nil once submitted — the option(s) the user chose. Locks the box
+    /// into a read-only summary.
+    let resolved: [String]?
+    /// Fires with the chosen option(s), in tap order, on submit.
+    let onSubmit: ([String]) -> Void
+
+    /// In-progress toggles (multi-select). Preserves tap order.
+    @State private var selected: [String] = []
+
+    private var isLocked: Bool { resolved != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let prompt = spec.prompt, !prompt.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(SomedayColors.primary)
+                    Text(prompt)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundColor(SomedayColors.charcoal)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(spacing: 8) {
+                ForEach(spec.options, id: \.self) { option in
+                    optionRow(option)
+                }
+            }
+
+            // Multi-select needs an explicit commit. Single-select submits
+            // on tap, so no button there.
+            if spec.multiSelect && !isLocked {
+                Button {
+                    guard !selected.isEmpty else { return }
+                    Haptics.success()
+                    onSubmit(selected)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(spec.submitLabel)
+                            .font(.system(size: 14, weight: .bold))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundColor(SomedayColors.charcoal)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 42)
+                    .background(
+                        Capsule().fill(selected.isEmpty
+                                       ? AnyShapeStyle(SomedayColors.lime.opacity(0.4))
+                                       : AnyShapeStyle(SomedayColors.lime))
+                    )
+                    .shadow(color: selected.isEmpty ? .clear : SomedayColors.lime.opacity(0.4),
+                            radius: 6, y: 1.5)
+                }
+                .buttonStyle(PressableChipStyle())
+                .disabled(selected.isEmpty)
+                .animation(.easeInOut(duration: 0.15), value: selected.isEmpty)
+            } else if isLocked {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Sent")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(SomedayColors.grayMedium)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white)
+        .somedayCardEdge(cornerRadius: 16)
+        .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
+        .frame(maxWidth: 320, alignment: .leading)
+    }
+
+    /// True when `option` is part of the current (or locked) selection.
+    private func isChosen(_ option: String) -> Bool {
+        (resolved ?? selected).contains(option)
+    }
+
+    @ViewBuilder
+    private func optionRow(_ option: String) -> some View {
+        let chosen = isChosen(option)
+        Button {
+            guard !isLocked else { return }
+            if spec.multiSelect {
+                Haptics.tap()
+                if let idx = selected.firstIndex(of: option) {
+                    selected.remove(at: idx)
+                } else {
+                    selected.append(option)
+                }
+            } else {
+                // Single-select: the tap IS the decision.
+                Haptics.success()
+                onSubmit([option])
+            }
+        } label: {
+            HStack(spacing: 11) {
+                indicator(chosen: chosen)
+                Text(option)
+                    .font(.system(size: 14.5, weight: .medium))
+                    .foregroundColor(SomedayColors.charcoal)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 13)
+            .frame(minHeight: 46)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(chosen ? SomedayColors.lime.opacity(0.18) : SomedayColors.anthropicWhite)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(chosen ? SomedayColors.lime : Color.somedayEdge,
+                                  lineWidth: chosen ? 1.5 : 1)
+            )
+            // Dim the options the user DIDN'T pick once the box is locked.
+            .opacity(isLocked && !chosen ? 0.4 : 1)
+        }
+        .buttonStyle(PressableChipStyle())
+        .disabled(isLocked)
+    }
+
+    /// Leading check indicator — a rounded square for multi-select
+    /// (checkbox), a circle for single-select (radio).
+    @ViewBuilder
+    private func indicator(chosen: Bool) -> some View {
+        ZStack {
+            let shape = RoundedRectangle(cornerRadius: spec.multiSelect ? 6 : 11)
+            shape
+                .fill(chosen ? SomedayColors.lime : Color.clear)
+                .frame(width: 22, height: 22)
+            shape
+                .strokeBorder(chosen ? SomedayColors.lime : Color.somedayEdge, lineWidth: 1.5)
+                .frame(width: 22, height: 22)
+            if chosen {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundColor(SomedayColors.charcoal)
+            }
+        }
     }
 }
 
@@ -3322,7 +3978,7 @@ private struct DiscoverAllCarouselTile: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(ChatTileMetrics.cornerRadius)
         .overlay(
             RoundedRectangle(cornerRadius: ChatTileMetrics.cornerRadius)

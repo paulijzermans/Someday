@@ -49,6 +49,13 @@ struct NotificationsView: View {
                     Text("A Sunday-morning summary of new places your friends saved this week.")
                 }
             }
+            // Drop onto the shared cream canvas so the Form's sections read
+            // as clean white tiles floating on warm off-white — the same
+            // tile language as the Profile page (see `cleanTile` /
+            // `anthropicCanvas` in TileStyle.swift), rather than the stock
+            // grey grouped-list background.
+            .scrollContentBackground(.hidden)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Notifications")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

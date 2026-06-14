@@ -35,7 +35,7 @@ struct AIAssistantSettingsView: View {
                 resetSection
             }
             .scrollContentBackground(.hidden)
-            .background(SomedayColors.grayLight)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("AI assistant")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -45,8 +45,9 @@ struct AIAssistantSettingsView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(.white)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
             }

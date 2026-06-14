@@ -84,6 +84,8 @@
 		A00100 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00100 /* Assets.xcassets */; };
 		A00101 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00101 /* Preview Assets.xcassets */; };
 		A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */ = {isa = PBXBuildFile; fileRef = F00110 /* Resources/Fonts/Gondens-DEMO.otf */; };
+		A00111 /* Resources/Fonts/GoogleSans-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F00111 /* Resources/Fonts/GoogleSans-Bold.ttf */; };
+		A00112 /* Resources/Fonts/GoogleSans-BoldItalic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F00112 /* Resources/Fonts/GoogleSans-BoldItalic.ttf */; };
 		B00001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = P00002 /* Supabase */; };
 /* End PBXBuildFile section */
 
@@ -166,6 +168,8 @@
 		F00100 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00101 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		F00110 /* Resources/Fonts/Gondens-DEMO.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/Fonts/Gondens-DEMO.otf"; sourceTree = "<group>"; };
+		F00111 /* Resources/Fonts/GoogleSans-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/Fonts/GoogleSans-Bold.ttf"; sourceTree = "<group>"; };
+		F00112 /* Resources/Fonts/GoogleSans-BoldItalic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/Fonts/GoogleSans-BoldItalic.ttf"; sourceTree = "<group>"; };
 		F00120 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FS001 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		FS002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -269,6 +273,8 @@
 				D00005 /* Features */,
 				F00100 /* Assets.xcassets */,
 				F00110 /* Resources/Fonts/Gondens-DEMO.otf */,
+				F00111 /* Resources/Fonts/GoogleSans-Bold.ttf */,
+				F00112 /* Resources/Fonts/GoogleSans-BoldItalic.ttf */,
 				F00120 /* Info.plist */,
 				D00099 /* Preview Content */,
 			);
@@ -650,6 +656,8 @@
 				A00100 /* Assets.xcassets in Resources */,
 				A00101 /* Preview Assets.xcassets in Resources */,
 				A00110 /* Resources/Fonts/Gondens-DEMO.otf in Resources */,
+				A00111 /* Resources/Fonts/GoogleSans-Bold.ttf in Resources */,
+				A00112 /* Resources/Fonts/GoogleSans-BoldItalic.ttf in Resources */,
 				A00042 /* Secrets.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

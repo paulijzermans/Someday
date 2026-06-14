@@ -181,7 +181,7 @@ struct PlaceCardSheet: View {
             // white because the card carries dense content (photo,
             // sliders, dark text) that would lose contrast against the
             // glass blur tile_bottom uses for its empty state.
-            .background(.white)
+            .background(Color.white)
             .cornerRadius(16)
             // The card wears the same defined thin edge as the hero photo
             // inside it — one modern outline language across the whole
@@ -507,11 +507,11 @@ struct PlaceCardSheet: View {
                     .foregroundColor(SomedayColors.charcoal)
                     .lineLimit(2...4)
                     .padding(10)
-                    .background(.white)
+                    .background(SomedayColors.anthropicWhite)
                     .cornerRadius(10)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color(.systemGray5), lineWidth: 1)
+                            .stroke(SomedayColors.anthropicTan, lineWidth: 1)
                     )
             }
         }
@@ -618,7 +618,7 @@ struct PlaceCardSheet: View {
                     .padding(.vertical, 14)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color(.systemGray4), lineWidth: 1.5)
+                            .stroke(SomedayColors.anthropicTan, lineWidth: 1.5)
                     )
             }
             .foregroundColor(SomedayColors.charcoal)
@@ -672,7 +672,7 @@ struct PlaceCardSheet: View {
                 .background(isInList ? (style?.color ?? SomedayColors.primary) : Color.clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(isInList ? Color.clear : Color(.systemGray4), lineWidth: 1.5)
+                        .stroke(isInList ? Color.clear : SomedayColors.anthropicTan, lineWidth: 1.5)
                 )
                 .cornerRadius(14)
         }
@@ -945,11 +945,11 @@ struct PlaceCardSheet: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(.white)
+            .background(SomedayColors.anthropicWhite)
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
         } else if let check = tonightCheck {
             tonightCheckPillResolved(check)
@@ -1016,11 +1016,11 @@ struct PlaceCardSheet: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(.white)
+            .background(SomedayColors.anthropicWhite)
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
 
         case .unknown:
@@ -1041,7 +1041,7 @@ struct PlaceCardSheet: View {
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
 
         case .error:
@@ -1060,7 +1060,7 @@ struct PlaceCardSheet: View {
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray5), lineWidth: 1)
+                    .stroke(SomedayColors.anthropicTan, lineWidth: 1)
             )
         }
     }
@@ -1117,11 +1117,11 @@ struct PlaceCardSheet: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+                .stroke(SomedayColors.anthropicTan, lineWidth: 1)
         )
     }
 }

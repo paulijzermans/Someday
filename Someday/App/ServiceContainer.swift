@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 @Observable
 final class ServiceContainer {
@@ -38,6 +39,13 @@ final class ServiceContainer {
     /// match. Drives the "find your loved ones on Someday" flow inside
     /// the onboarding tile. Real on Supabase stack, mock otherwise.
     let contacts: ContactsServiceProtocol
+    /// Per-user usage accounting — how many places the user has imported
+    /// and how many AI tokens they've burned through the chat. Reads from
+    /// the `user_usage` table (live) or returns sample figures (mock). The
+    /// token side is *written* server-side by the `chat` Edge Function;
+    /// the import side is recorded from the client after each import.
+    /// Surfaced as a tile in Settings → Plan.
+    let usage: UsageServiceProtocol
 
     static let mock: ServiceContainer = {
         let places = MockPlaceService()
@@ -61,7 +69,8 @@ final class ServiceContainer {
             ),
             chat: ChatRouter(live: nil, fallback: MockChatService()),
             itinerary: ItineraryRouter(live: nil, fallback: MockItineraryService()),
-            contacts: MockContactsService()
+            contacts: MockContactsService(),
+            usage: MockUsageService()
         )
     }()
 
@@ -104,7 +113,8 @@ final class ServiceContainer {
             // works end-to-end (plan is framed on the map); it just isn't
             // persisted server-side until a backing service lands.
             itinerary: ItineraryRouter(live: nil, fallback: MockItineraryService()),
-            contacts: ContactsService()
+            contacts: ContactsService(),
+            usage: SupabaseUsageService()
         )
     }()
 
@@ -125,7 +135,8 @@ final class ServiceContainer {
         reservationCheck: ReservationCheckService,
         chat: ChatService,
         itinerary: ItineraryService,
-        contacts: ContactsServiceProtocol
+        contacts: ContactsServiceProtocol,
+        usage: UsageServiceProtocol
     ) {
         self.auth = auth
         self.places = places
@@ -138,5 +149,100 @@ final class ServiceContainer {
         self.chat = chat
         self.itinerary = itinerary
         self.contacts = contacts
+        self.usage = usage
+    }
+}
+
+// MARK: - Usage accounting
+//
+// Lives here (rather than in its own file) so it compiles without a
+// pbxproj entry — see CLAUDE.md gotcha #1: the project has no synchronized
+// file groups, so a fresh `.swift` on disk isn't picked up automatically.
+
+/// A snapshot of a single user's lifetime usage. Pure value type so it
+/// crosses the actor boundary cheaply and drives SwiftUI equality.
+struct UsageStats: Sendable, Equatable {
+    /// Cumulative number of places imported via the link/extraction flow.
+    var imports: Int
+    /// Cumulative AI tokens (input + output) attributed to this user by
+    /// the `chat` Edge Function.
+    var tokensUsed: Int
+
+    static let empty = UsageStats(imports: 0, tokensUsed: 0)
+}
+
+protocol UsageServiceProtocol: Sendable {
+    /// Reads the current totals for a user. Returns `.empty` when the user
+    /// has no row yet rather than throwing — a brand-new account simply
+    /// has zero usage.
+    func fetchUsage(for userID: String) async throws -> UsageStats
+    /// Records that `count` places were just imported. Best-effort: usage
+    /// accounting must never block or fail an import, so this swallows its
+    /// own errors.
+    func recordImport(count: Int) async
+}
+
+/// Demo-mode usage: plausible sample figures that tick up as you import,
+/// so the Plan tile shows real-feeling numbers without a backend.
+actor MockUsageService: UsageServiceProtocol {
+    private var stats = UsageStats(imports: 12, tokensUsed: 48_500)
+
+    func fetchUsage(for userID: String) async throws -> UsageStats { stats }
+
+    func recordImport(count: Int) async {
+        stats.imports += count
+        // Rough heuristic so the token counter also moves in demo mode —
+        // imports tend to involve a little AI enrichment.
+        stats.tokensUsed += count * 320
+    }
+}
+
+/// Live usage backed by the `user_usage` table. Reads are a plain select;
+/// the import counter is bumped through the `increment_usage` SQL function
+/// (security-definer, scoped to `auth.uid()`), the same RPC pattern the
+/// chat Edge Function uses for tokens.
+final class SupabaseUsageService: UsageServiceProtocol, @unchecked Sendable {
+    private let client: SupabaseClient
+
+    init(client: SupabaseClient = SupabaseClientProvider.shared) {
+        self.client = client
+    }
+
+    /// Row shape of `public.user_usage`. snake_case to match Postgres.
+    private struct UserUsageRow: Decodable {
+        let imports_count: Int
+        let tokens_used: Int
+    }
+
+    func fetchUsage(for userID: String) async throws -> UsageStats {
+        let rows: [UserUsageRow] = try await client
+            .from("user_usage")
+            .select()
+            .eq("user_id", value: userID)
+            .limit(1)
+            .execute()
+            .value
+
+        guard let row = rows.first else { return .empty }
+        return UsageStats(imports: row.imports_count, tokensUsed: row.tokens_used)
+    }
+
+    func recordImport(count: Int) async {
+        struct Params: Encodable {
+            let p_imports: Int
+            let p_tokens: Int
+        }
+        do {
+            try await client.rpc(
+                "increment_usage",
+                params: Params(p_imports: count, p_tokens: 0)
+            ).execute()
+        } catch {
+            // Best-effort only — never surface an accounting failure to the
+            // import flow. The chat function's token writes are independent.
+            #if DEBUG
+            print("⚠️ recordImport failed: \(error)")
+            #endif
+        }
     }
 }

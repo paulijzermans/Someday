@@ -60,7 +60,7 @@ struct ProfileView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
             }
-            .background(SomedayColors.grayLight)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
@@ -70,8 +70,9 @@ struct ProfileView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(.white)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -83,7 +84,7 @@ struct ProfileView: View {
                 case .account:       AccountSettingsView(appState: appState)
                 case .notifications: NotificationsView()
                 case .privacy:       PrivacyView(appState: appState)
-                case .plan:          PlanView()
+                case .plan:          PlanView(appState: appState)
                 case .ai:            AIAssistantSettingsView()
                 #if DEBUG
                 case .developer:     DeveloperSettingsView()
@@ -103,9 +104,7 @@ struct ProfileView: View {
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white)
-        .cornerRadius(24)
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .cleanTile(cornerRadius: 24)
     }
 
     private var avatar: some View {
@@ -282,9 +281,7 @@ struct ProfileView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white)
-        .cornerRadius(20)
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .cleanTile(cornerRadius: 20)
     }
 
     private var friendStack: some View {
@@ -363,9 +360,7 @@ struct ProfileView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white)
-            .cornerRadius(20)
-            .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+            .cleanTile(cornerRadius: 20)
         }
         .simultaneousGesture(TapGesture().onEnded { Haptics.tap() })
     }
@@ -400,9 +395,7 @@ struct ProfileView: View {
                 onSignOut()
             }
         }
-        .background(.white)
-        .cornerRadius(20)
-        .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
+        .cleanTile(cornerRadius: 20)
     }
 
     private func settingsRow(
@@ -454,8 +447,7 @@ struct ProfileView: View {
     /// they sign up and every time they wander back into Profile.
     private var sloganFooter: some View {
         VStack(spacing: 6) {
-            Text("Someday")
-                .font(SomedayFonts.brand(size: 22))
+            SomedayFonts.wordmark(size: 22)
                 .foregroundColor(SomedayColors.green)
                 .tracking(0.5)
             Text("Save for Someday")
@@ -479,8 +471,9 @@ struct ProfileView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(SomedayColors.charcoal)
                     .frame(width: 36, height: 36)
-                    .background(.white)
+                    .background(Color.white)
                     .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
             }
         }
     }
@@ -515,7 +508,7 @@ struct DeveloperSettingsView: View {
                 pipelineSection
             }
             .scrollContentBackground(.hidden)
-            .background(SomedayColors.grayLight)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Developer")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -525,8 +518,9 @@ struct DeveloperSettingsView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(.white)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
             }

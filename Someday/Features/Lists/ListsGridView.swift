@@ -34,10 +34,12 @@ struct ListsGridView: View {
     /// User picked "Delete list" from a tile's context menu. Same
     /// reasoning as merge — confirmation alert lives at MapHomeView.
     var onDeleteRequested: (_ name: String) -> Void = { _ in }
-    /// User dragged list `source` onto list `target` while in edit
-    /// (jiggle) mode — meaning they want to *reorder*, not merge. The
-    /// parent forwards to `MapViewModel.reorderCustomList(named:beforeName:)`.
-    var onReorderRequested: (_ source: String, _ beforeTarget: String) -> Void = { _, _ in }
+    /// User finished a home-screen-style reorder drag in edit (jiggle)
+    /// mode. We reflow the grid live as the finger moves, so on drop we
+    /// hand back the complete final ordering of own-list names rather than
+    /// a single "move X before Y" instruction. The parent forwards to
+    /// `MapViewModel.setCustomListOrder(_:)`.
+    var onReorderCommit: (_ orderedNames: [String]) -> Void = { _ in }
     /// Membership-editor mode driver. When non-nil, the grid is in
     /// "toggle membership" mode for the carried place id:
     ///   • Each own-list tile renders with a coloured border when
@@ -60,13 +62,26 @@ struct ListsGridView: View {
     /// Name of the tile currently being dragged in edit mode. Only one
     /// tile drags at a time. `nil` when idle.
     @State private var draggingName: String?
-    /// Live translation applied to the dragged tile while the finger
-    /// is down. Reset to `.zero` on drop / cancel.
-    @State private var dragOffset: CGSize = .zero
+    /// Live translation of the active drag (from the finger-down point).
+    /// Drives the lifted overlay copy's position. Reset on drop / cancel.
+    @State private var dragTranslation: CGSize = .zero
+    /// Resting frame of the dragged tile captured at drag start, in the
+    /// grid's named coordinate space. The lifted overlay is positioned at
+    /// `origin.center + dragTranslation`, so it follows the finger 1:1
+    /// independently of how the in-grid placeholder reflows — which is
+    /// what keeps the dragged tile glued to the finger with no wobble.
+    @State private var dragOriginFrame: CGRect = .zero
+    /// Live working order of own-list **names** during a reorder drag.
+    /// We mutate THIS as the finger crosses slots so neighbours animate
+    /// out of the way in real time (iPhone Home Screen reflow), and the
+    /// grid renders from it. `nil` when no drag is active — the grid then
+    /// renders straight from the parent's `customLists`. Cleared once the
+    /// committed order propagates back via `customLists`.
+    @State private var workingOrder: [String]?
     /// Recorded frame of every own-list tile, in the grid's coordinate
     /// space. Populated via a PreferenceKey + GeometryReader background
-    /// on each tile, then read in the drag's `onEnded` to figure out
-    /// which slot the user released over.
+    /// on each tile, then read during the drag to figure out which slot
+    /// the finger is hovering so we can reflow toward it.
     @State private var tileFrames: [String: CGRect] = [:]
 
     private let columns = [
@@ -112,6 +127,27 @@ struct ListsGridView: View {
             if lhs.friend.name != rhs.friend.name { return lhs.friend.name < rhs.friend.name }
             return lhs.name < rhs.name
         }
+    }
+
+    /// The own custom lists in the order to *render* them. During a
+    /// reorder drag this follows `workingOrder` (so neighbours reflow
+    /// live); otherwise it's the parent's `customLists` untouched. Lists
+    /// present in `customLists` but missing from `workingOrder` (e.g. one
+    /// created mid-drag — shouldn't happen) are appended so nothing is
+    /// dropped.
+    private var orderedCustomLists: [CustomList] {
+        guard let order = workingOrder else { return customLists }
+        let byName = Dictionary(customLists.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        var out = order.compactMap { byName[$0] }
+        for custom in customLists where !order.contains(custom.name) { out.append(custom) }
+        return out
+    }
+
+    /// The CustomList currently being dragged, used to render the lifted
+    /// overlay copy that follows the finger above the grid.
+    private var draggingCustom: CustomList? {
+        guard let name = draggingName else { return nil }
+        return customLists.first(where: { $0.name == name })
     }
 
     var body: some View {
@@ -201,7 +237,7 @@ struct ListsGridView: View {
                 // which raises the confirmation alert. Long-press is the
                 // system default to start dragging — no extra gesture
                 // recogniser needed.
-                ForEach(Array(customLists.enumerated()), id: \.element.id) { idx, custom in
+                ForEach(Array(orderedCustomLists.enumerated()), id: \.element.id) { idx, custom in
                     customListTile(custom: custom, index: idx)
                 }
 
@@ -239,6 +275,42 @@ struct ListsGridView: View {
             // hit-test the drop position against neighbours.
             .coordinateSpace(name: ListsGridView.coordSpace)
             .onPreferenceChange(TileFramePreferenceKey.self) { tileFrames = $0 }
+            // The lifted tile: a single copy of the dragged list that
+            // floats above the grid and tracks the finger 1:1. The cell
+            // left behind in the flow renders as an invisible placeholder
+            // (the "gap"), so the neighbours reflow around it while this
+            // copy is what the user actually sees moving — exactly the
+            // iPhone Home Screen idiom. Positioned in the same named
+            // coordinate space the tile frames are recorded in.
+            .overlay {
+                if let custom = draggingCustom {
+                    ListTile(
+                        name: custom.name,
+                        placeCount: custom.placeIDs.count,
+                        style: ListVisualStyle.style(for: custom.name),
+                        imageData: custom.imageData,
+                        isEditing: true,
+                        wiggleSeed: 0,
+                        action: {}
+                    )
+                    .frame(width: dragOriginFrame.width, height: dragOriginFrame.height)
+                    .scaleEffect(1.08)
+                    .shadow(color: .black.opacity(0.20), radius: 12, y: 6)
+                    .position(
+                        x: dragOriginFrame.midX + dragTranslation.width,
+                        y: dragOriginFrame.midY + dragTranslation.height
+                    )
+                    .allowsHitTesting(false)
+                    .transition(.identity)
+                }
+            }
+        }
+        // When the committed order propagates back through `customLists`
+        // (the parent applied our reorder), drop the local working order
+        // so we render from the source of truth again. Keeping it until
+        // this moment avoids a one-frame flash to the pre-drop order.
+        .onChange(of: customLists.map(\.id)) { _, _ in
+            workingOrder = nil
         }
     }
 
@@ -285,10 +357,11 @@ struct ListsGridView: View {
                 onDismiss()
             }
         )
-        // Record this tile's resting frame so the drag's `onEnded` can
-        // figure out which slot the user released over. We DON'T
-        // record the offset-during-drag — only the natural frame —
-        // because that's the slot the dragged tile would target.
+        // Record this tile's resting frame, in the grid's named space, so
+        // the drag can hit-test which slot the finger is hovering and
+        // reflow toward it. This is the *live* slot position — as the
+        // grid reflows mid-drag the frames update, keeping hit-testing
+        // honest.
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -298,18 +371,12 @@ struct ListsGridView: View {
                     )
             }
         )
-        // Lift + offset while dragging. zIndex pulls the dragged tile
-        // above its neighbours so it doesn't disappear behind them.
-        // `animation(nil, value:)` skips animation on the drag offset
-        // itself (we want it to track the finger 1:1) but the snap-
-        // back on cancel still animates via the explicit
-        // `withAnimation` in `onEnded`.
-        .scaleEffect(isThisDragging ? 1.08 : 1.0)
-        .opacity(isThisDragging ? 0.96 : 1.0)
-        .shadow(color: .black.opacity(isThisDragging ? 0.18 : 0), radius: 10, y: 4)
-        .offset(isThisDragging ? dragOffset : .zero)
-        .zIndex(isThisDragging ? 100 : 0)
-        .animation(.easeInOut(duration: 0.18), value: isThisDragging)
+        // The dragged cell stays in the flow as an invisible placeholder
+        // — it IS the gap the neighbours reflow around. The visible,
+        // finger-tracking copy is the lifted overlay drawn on the grid
+        // (see `unifiedGrid`). Hiding the cell rather than removing it
+        // keeps the layout stable (one slot per list at all times).
+        .opacity(isThisDragging ? 0 : 1)
         // Non-edit mode keeps the system drag-and-drop merge: long-
         // press starts a system drag with a clean floating preview;
         // drop on another tile raises the merge alert. The context
@@ -329,48 +396,75 @@ struct ListsGridView: View {
             onMergeRequested: onMergeRequested,
             onDeleteRequested: onDeleteRequested
         ))
-        // Edit mode: a manual DragGesture that moves THIS tile as one
-        // visual element. On release we hit-test the dropped position
-        // against the recorded tileFrames and pick the slot to insert
-        // before. No `.draggable` here — that double-attached the
-        // gesture system and produced the "two elements" feeling.
+        // Edit mode: a manual DragGesture drives the home-screen reorder.
+        // The lifted overlay (in `unifiedGrid`) is what visually follows
+        // the finger; here we (a) capture the origin frame so that copy
+        // can be positioned, and (b) reflow `workingOrder` live as the
+        // finger crosses slots so neighbours animate out of the way. On
+        // release the final order is already correct — we just commit it.
+        // No `.draggable` here — that double-attached the gesture system
+        // and produced the "two elements" feeling.
         .gesture(
             isEditing
                 ? DragGesture(coordinateSpace: .named(ListsGridView.coordSpace))
                     .onChanged { value in
                         if draggingName == nil {
                             draggingName = custom.name
+                            dragOriginFrame = tileFrames[custom.name] ?? .zero
+                            if workingOrder == nil {
+                                workingOrder = orderedCustomLists.map(\.name)
+                            }
                             Haptics.tap()
                         }
-                        dragOffset = value.translation
+                        dragTranslation = value.translation
+                        reflowDuringDrag(dragged: custom.name, translation: value.translation)
                     }
-                    .onEnded { value in
-                        // Compute the centre of the tile in its
-                        // *dropped* position — its resting frame plus
-                        // the final translation — then find which
-                        // recorded tile frame contains that point.
-                        let dropped: String? = {
-                            guard let mine = tileFrames[custom.name] else { return nil }
-                            let centre = CGPoint(
-                                x: mine.midX + value.translation.width,
-                                y: mine.midY + value.translation.height
-                            )
-                            return tileFrames.first(where: { name, frame in
-                                name != custom.name && frame.contains(centre)
-                            })?.key
-                        }()
-                        if let target = dropped {
-                            onReorderRequested(custom.name, target)
+                    .onEnded { _ in
+                        // The live reflow already produced the final
+                        // order; hand the whole sequence to the parent.
+                        if let order = workingOrder {
+                            onReorderCommit(order)
                         }
-                        // Reset drag state. Use spring so a "no-drop"
-                        // release snaps cleanly back to the slot.
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                        // Drop the lifted copy. The placeholder fades back
+                        // in at its (new) slot as `isThisDragging` clears.
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
                             draggingName = nil
-                            dragOffset = .zero
+                            dragTranslation = .zero
                         }
                     }
                 : nil
         )
+    }
+
+    /// Live reorder while the finger is down. Projects the dragged tile's
+    /// centre to where the finger has carried it (origin centre + current
+    /// translation), finds which *other* own-list tile slot that point
+    /// falls inside, and moves the dragged name to sit in that slot —
+    /// animating `workingOrder` so the displaced neighbours slide over.
+    /// Hit-testing against the live `tileFrames` means each reflow is
+    /// computed against the grid's current (already-reflowed) layout.
+    private func reflowDuringDrag(dragged: String, translation: CGSize) {
+        let centre = CGPoint(
+            x: dragOriginFrame.midX + translation.width,
+            y: dragOriginFrame.midY + translation.height
+        )
+        guard let target = tileFrames.first(where: { name, frame in
+            name != dragged && frame.contains(centre)
+        })?.key else { return }
+        guard var order = workingOrder,
+              let from = order.firstIndex(of: dragged),
+              let to = order.firstIndex(of: target),
+              from != to else { return }
+        order.remove(at: from)
+        // After removing the dragged name, the target shifts left by one
+        // if it sat after the source — insert at the adjusted index so
+        // the dragged tile lands exactly in the target's old slot.
+        let insertIdx = to > from ? to - 1 : to
+        order.insert(dragged, at: insertIdx)
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
+            workingOrder = order
+        }
+        Haptics.tap()
     }
 }
 
@@ -398,7 +492,7 @@ struct FriendListGridTile: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 tileBody
                     .overlay(alignment: .bottomTrailing) {
                         avatar
@@ -420,15 +514,11 @@ struct FriendListGridTile: View {
             // tiles share a single silhouette in the grid.
             .padding(10)
             .frame(maxWidth: .infinity)
-            // Translucent liquid-glass material — the tile "floats"
-            // over the map blur instead of sitting on an opaque white
-            // card. Same `.glassEffect` material used by the floating
-            // tile container itself and by the chat bubbles, so the
-            // whole UI reads as one glass surface.
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
-            // Defined thin edge so shared-list tiles match the modern
-            // outline of the own-list tiles beside them.
-            .somedayCardEdge(cornerRadius: 20)
+            // Clean white tile + soft shadow — the standard Someday tile
+            // language (see `cleanTile` / the Profile cards). Replaces the
+            // old glass-over-map material + tan edge so the Lists grid
+            // matches the settings page.
+            .cleanTile(cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }
@@ -444,7 +534,7 @@ struct FriendListGridTile: View {
                     .font(.system(size: 30, weight: .semibold))
                     .foregroundStyle(style.color)
             )
-            .photoTileEdge(cornerRadius: 18)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     /// Small (24pt) avatar chip with a thin white ring — fits inside
@@ -511,7 +601,7 @@ struct ListTile: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 tileBody
 
                 VStack(spacing: 1) {
@@ -524,22 +614,15 @@ struct ListTile: View {
                         .foregroundColor(SomedayColors.grayMedium)
                 }
             }
-            // ONE rounded container around the icon + text. The fill
-            // is near-white with a hairline border so the wrapper reads
-            // as a single tile (the iPhone-icon-with-label gestalt)
-            // without competing visually with the colored icon inside.
+            // ONE rounded container around the icon + text — the
+            // iPhone-icon-with-label gestalt.
             .padding(10)
             .frame(maxWidth: .infinity)
-            // Translucent liquid-glass material — the tile "floats"
-            // over the map blur instead of sitting on an opaque white
-            // card. Same `.glassEffect` material used by the floating
-            // tile container itself and by the chat bubbles, so the
-            // whole UI reads as one glass surface.
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
-            // Defined thin edge so the whole tile reads as one crisp,
-            // modern element — same outline language as the icon face
-            // inside it and the cards elsewhere in the app.
-            .somedayCardEdge(cornerRadius: 20)
+            // Clean white tile + soft shadow — the standard Someday tile
+            // language (see `cleanTile` / the Profile cards). Replaces the
+            // old glass-over-map material + tan edge so the Lists grid
+            // matches the settings page.
+            .cleanTile(cornerRadius: 20)
             // Membership-edit highlight. When this tile represents a
             // list the active pin already belongs to, draw a thick
             // border in the list's own colour so the user can see at a
@@ -627,9 +710,9 @@ struct ListTile: View {
                         startPoint: .center, endPoint: .bottom
                     )
                 )
-                // Defined thin edge around the icon face — same modern
-                // outline language as the photo boxes across the app.
-                .photoTileEdge(cornerRadius: 18)
+                // Rounded clip only — no edge. The icon face sits flush on
+                // the white tile to match the settings-page tile style.
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         } else {
             RoundedRectangle(cornerRadius: 18)
                 .fill(style.color.opacity(0.16))
@@ -639,7 +722,7 @@ struct ListTile: View {
                         .font(.system(size: 36, weight: .semibold))
                         .foregroundStyle(style.color)
                 )
-                .photoTileEdge(cornerRadius: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 }
@@ -683,7 +766,7 @@ private struct AddListTile: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 18)
                         .stroke(SomedayColors.grayMedium.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 6]))
@@ -698,15 +781,12 @@ private struct AddListTile: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(SomedayColors.grayMedium)
             }
-            // Match the floating glass treatment used by the other
+            // Match the clean white tile treatment used by the other
             // tiles so all four cell variants (own, dict, friend, add)
             // share one silhouette.
             .padding(10)
             .frame(maxWidth: .infinity)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
-            // Defined thin edge so the add tile matches the modern
-            // outline of the list tiles beside it.
-            .somedayCardEdge(cornerRadius: 20)
+            .cleanTile(cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }

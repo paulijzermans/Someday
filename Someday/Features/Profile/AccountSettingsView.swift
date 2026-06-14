@@ -47,6 +47,11 @@ struct AccountSettingsView: View {
                 mapSection(prefs: prefs)
                 signOutSection
             }
+            // Cream canvas so the Form's grouped sections read as the same
+            // clean white tiles as the Profile page (TileStyle.swift), not
+            // the stock grey grouped-list background.
+            .scrollContentBackground(.hidden)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }

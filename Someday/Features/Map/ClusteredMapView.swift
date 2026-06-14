@@ -124,6 +124,24 @@ struct ClusteredMapView: UIViewRepresentable {
     var breathingPlaceID: String? = nil
     var breathingSuggestionID: String? = nil
 
+    /// id of the pin currently "armed" for deletion via the long-press
+    /// jiggle idiom (see `MapViewModel.deletingPlaceID`). When it matches
+    /// a place annotation, that pin wiggles and shows a red × badge.
+    var deletingPlaceID: String? = nil
+    /// Long-press landed on a saved pin — parent arms it for deletion.
+    var onLongPressPlace: (Place) -> Void = { _ in }
+    /// User tapped the red × on an armed pin — parent deletes it.
+    var onRequestDeletePlace: (Place) -> Void = { _ in }
+    /// User tapped anywhere other than the × while a pin is armed —
+    /// parent disarms and returns the map to normal.
+    var onCancelDeleteMode: () -> Void = {}
+
+    /// Tag stamped on the red × delete button so the cancel-tap gesture
+    /// can recognise (and ignore) touches that land on it — otherwise a
+    /// tap on the × would both delete AND fire the "tapped elsewhere"
+    /// cancel.
+    fileprivate static let deleteButtonTag = 7731
+
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
@@ -152,10 +170,49 @@ struct ClusteredMapView: UIViewRepresentable {
             forAnnotationViewWithReuseIdentifier: SuggestionPinAnnotationView.reuseID
         )
 
+        // Long-press to "arm" a saved pin for deletion (the iPhone
+        // home-screen jiggle idiom). We hit-test the press location
+        // against the place annotation views in the coordinator. Runs
+        // alongside MapKit's own pan/zoom/tap recognisers — the short
+        // press duration plus simultaneous recognition (see the gesture
+        // delegate) keeps panning and pin-selection working as before.
+        let longPress = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLongPress(_:))
+        )
+        longPress.minimumPressDuration = 0.45
+        longPress.delegate = context.coordinator
+        mapView.addGestureRecognizer(longPress)
+
+        // Cancel-tap: while a pin is armed, any tap that ISN'T on the red
+        // × badge disarms it. Inert (returns immediately) when nothing is
+        // armed, so it never interferes with normal pin selection.
+        let cancelTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleCancelTap(_:))
+        )
+        cancelTap.delegate = context.coordinator
+        // Crucial: the cancel-tap must wait for the long-press to FAIL
+        // before it can fire. Otherwise the finger-lift that ends the
+        // arming long-press is itself read as a "tap elsewhere" and
+        // immediately disarms the pin — so the × only showed while the
+        // finger was held down. Requiring the long-press to fail means:
+        //   • arming long-press → succeeds → cancel-tap never fires, the
+        //     × stays put after you lift your finger; and
+        //   • a later quick tap → long-press fails fast → cancel-tap
+        //     fires → disarm.
+        cancelTap.require(toFail: longPress)
+        context.coordinator.cancelTapRecognizer = cancelTap
+        mapView.addGestureRecognizer(cancelTap)
+
         return mapView
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
+        // Refresh the coordinator's snapshot of `self` so its gesture
+        // handlers read the current `deletingPlaceID` + callbacks rather
+        // than the values captured at init time.
+        context.coordinator.parent = self
         syncAnnotations(on: mapView)
         syncSuggestions(on: mapView)
         // Keep the user-location dot in sync with the parent's flag.
@@ -172,6 +229,10 @@ struct ClusteredMapView: UIViewRepresentable {
         // helper checks for an existing animation before adding a new
         // one, so running this on every updateUIView is cheap.
         syncBreathing(on: mapView)
+
+        // Add / remove the red × badge + wiggle on whichever pin matches
+        // `deletingPlaceID`. Cheap + idempotent, same as syncBreathing.
+        syncDeleteBadges(on: mapView, coordinator: context.coordinator)
 
         if Self.significantlyDifferent(mapView.region, region) {
             mapView.setRegion(region, animated: true)
@@ -231,6 +292,98 @@ struct ClusteredMapView: UIViewRepresentable {
         if view.layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) {
             view.layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         }
+    }
+
+    // MARK: - Delete-mode badge + wiggle
+
+    /// Walk every annotation view; on the one whose place matches
+    /// `deletingPlaceID` attach the red × badge + wiggle, strip both off
+    /// every other. Mirrors `syncBreathing` — pin views are recycled, so
+    /// we re-evaluate from scratch on each pass rather than tracking the
+    /// last-armed view.
+    private func syncDeleteBadges(on mapView: MKMapView, coordinator: Coordinator) {
+        for ann in mapView.annotations {
+            guard let view = mapView.view(for: ann) else { continue }
+            let armed = (ann as? PlaceAnnotation)?.place.id == deletingPlaceID
+                && deletingPlaceID != nil
+            if armed {
+                ClusteredMapView.addDeleteBadge(to: view, target: coordinator)
+                ClusteredMapView.attachWiggle(to: view)
+            } else {
+                ClusteredMapView.removeDeleteBadge(from: view)
+                ClusteredMapView.removeWiggle(from: view)
+            }
+        }
+    }
+
+    /// Red, white-ringed × button overhanging the pin's top-right corner
+    /// — the home-screen "delete" affordance. No-op if already present.
+    /// The button targets the coordinator; at tap time it resolves its
+    /// own place from the annotation view it lives on.
+    static func addDeleteBadge(to view: MKAnnotationView, target: Coordinator) {
+        guard view.viewWithTag(deleteButtonTag) == nil else { return }
+        let size: CGFloat = 20
+        let btn = UIButton(type: .custom)
+        btn.tag = deleteButtonTag
+        // Centre the × on the TILE's top-right corner, not the canvas's.
+        // `renderTile` uses fixed geometry — 1.5pt left pad, a 40pt tile,
+        // a 7pt pointer below — and event pins reserve extra top/right
+        // room for a clock badge by GROWING the canvas, not by moving the
+        // tile. So the tile's top-right corner is at a constant
+        // (41.5, height − 47) regardless of pin type. Pinning the × there
+        // means on an event pin it lands ON the clock badge (replacing
+        // it) instead of stacking even higher above it.
+        let tileRightX: CGFloat = 41.5             // leftPad 1.5 + tileSide 40
+        let tileTopY = view.bounds.height - 47     // − tileSide 40 − pointerH 7
+        btn.frame = CGRect(
+            x: tileRightX - size / 2,
+            y: tileTopY - size / 2,
+            width: size,
+            height: size
+        )
+        btn.backgroundColor = UIColor.systemRed
+        btn.layer.cornerRadius = size / 2
+        btn.layer.borderColor = UIColor.white.cgColor
+        btn.layer.borderWidth = 1.5
+        btn.layer.shadowColor = UIColor.black.cgColor
+        btn.layer.shadowOpacity = 0.25
+        btn.layer.shadowRadius = 2
+        btn.layer.shadowOffset = CGSize(width: 0, height: 1)
+        if let icon = UIImage(
+            systemName: "xmark",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .heavy)
+        )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+            btn.setImage(icon, for: .normal)
+        }
+        btn.addTarget(target, action: #selector(Coordinator.handleDeleteTap(_:)), for: .touchUpInside)
+        view.addSubview(btn)
+        // Spring pop-in so the badge "appears" rather than blinks.
+        btn.transform = CGAffineTransform(scaleX: 0.1, y: 0.1)
+        UIView.animate(withDuration: 0.28, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.4) {
+            btn.transform = .identity
+        }
+    }
+
+    static func removeDeleteBadge(from view: MKAnnotationView) {
+        view.viewWithTag(deleteButtonTag)?.removeFromSuperview()
+    }
+
+    /// Gentle continuous rotation wiggle (~±2.5°) keyed `wiggle`, rotating
+    /// about the view centre so the pin sways like a home-screen icon.
+    /// Additive so it composes with any breathing scale already running.
+    static func attachWiggle(to view: MKAnnotationView) {
+        guard view.layer.animation(forKey: "wiggle") == nil else { return }
+        let rot = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        rot.values = [-0.045, 0.045, -0.045]
+        rot.keyTimes = [0, 0.5, 1]
+        rot.duration = 0.22
+        rot.repeatCount = .infinity
+        rot.isAdditive = true
+        view.layer.add(rot, forKey: "wiggle")
+    }
+
+    static func removeWiggle(from view: MKAnnotationView) {
+        view.layer.removeAnimation(forKey: "wiggle")
     }
 
     /// Diff `suggestions` against the AI-suggestion annotations already
@@ -297,12 +450,80 @@ struct ClusteredMapView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    class Coordinator: NSObject, MKMapViewDelegate {
+    class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: ClusteredMapView
         private var isProgrammatic = false
+        /// Held weakly so the gesture delegate can tell our cancel-tap
+        /// apart from MapKit's own recognisers.
+        weak var cancelTapRecognizer: UITapGestureRecognizer?
 
         init(_ parent: ClusteredMapView) {
             self.parent = parent
+        }
+
+        // MARK: Long-press delete mode
+
+        /// Long-press began — hit-test the press point against the place
+        /// pins on screen and arm the closest one for deletion. We test
+        /// each annotation view's frame (converted into map coordinates)
+        /// rather than nearest-coordinate, so the press has to actually
+        /// land on a pin's tile, not just near its spot.
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began,
+                  let mapView = gesture.view as? MKMapView else { return }
+            let point = gesture.location(in: mapView)
+            var best: (place: Place, dist: CGFloat)?
+            for ann in mapView.annotations {
+                guard let pa = ann as? PlaceAnnotation,
+                      let view = mapView.view(for: ann) else { continue }
+                // The pin tile is small; pad the hit rect a touch so a
+                // press just off the edge still counts.
+                let frame = view.convert(view.bounds, to: mapView).insetBy(dx: -6, dy: -6)
+                guard frame.contains(point) else { continue }
+                let centre = CGPoint(x: frame.midX, y: frame.midY)
+                let dist = hypot(centre.x - point.x, centre.y - point.y)
+                if best == nil || dist < best!.dist { best = (pa.place, dist) }
+            }
+            if let best { parent.onLongPressPlace(best.place) }
+        }
+
+        /// A tap landed while a pin is armed (and NOT on the × badge —
+        /// the gesture delegate filters those out). Disarm.
+        @objc func handleCancelTap(_ gesture: UITapGestureRecognizer) {
+            guard parent.deletingPlaceID != nil else { return }
+            parent.onCancelDeleteMode()
+        }
+
+        /// The red × on an armed pin was tapped — resolve its place from
+        /// the annotation view it lives on and ask the parent to delete.
+        @objc func handleDeleteTap(_ sender: UIButton) {
+            guard let view = sender.superview as? MKAnnotationView,
+                  let pa = view.annotation as? PlaceAnnotation else { return }
+            parent.onRequestDeletePlace(pa.place)
+        }
+
+        // MARK: UIGestureRecognizerDelegate
+
+        /// Run our long-press / cancel-tap alongside MapKit's built-in
+        /// pan, zoom, and selection recognisers instead of fighting them.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        /// Keep the cancel-tap from firing when the touch is on the red ×
+        /// button — otherwise tapping the × would both delete the pin and
+        /// register as a "tapped elsewhere" cancel.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer === cancelTapRecognizer {
+                var node = touch.view
+                while let current = node {
+                    if current.tag == ClusteredMapView.deleteButtonTag { return false }
+                    node = current.superview
+                }
+            }
+            return true
         }
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
@@ -389,6 +610,210 @@ struct ClusteredMapView: UIViewRepresentable {
     }
 }
 
+// MARK: - Shared pin-tile renderer
+//
+// SINGLE source of truth for the map's pin geometry. Saved pins, AI
+// suggestion pins, and clusters are all the *same* rounded photo-tile with
+// a pointer tapering to the coordinate — they differ only in what fills the
+// tile (photo / category icon / count), the colour of the pointer stem, and
+// an optional corner badge. Historically each `…AnnotationView` redrew that
+// geometry by hand in its own `renderTile`, so a tweak to one (corner
+// radius, pointer size, badge overhang, the edge treatment) silently
+// drifted from the others. Everything now funnels through
+// `MapPinTile.render`, so there is exactly one place to change the pin look.
+//
+// Edge treatment: the tile wears the classic frame — a `edgeWidth`-thick
+// ring (white for saved pins/clusters, lime for AI pins) around the photo,
+// with the pointer stem in the same colour. `edgeWidth` defaults to 2.5;
+// pass 0 for an edge-to-edge variant. A 0.5pt dark hairline is also stroked
+// around the silhouette for legibility on light maps.
+enum MapPinTile {
+    // The one true geometry. Don't fork these into a caller.
+    static let side: CGFloat = 40
+    static let corner: CGFloat = 11
+    static let pointerH: CGFloat = 7
+    static let pointerHalf: CGFloat = 6.5
+    static let badgeSize: CGFloat = 15
+    static let edgePad: CGFloat = 1.5   // hairline + anti-alias breathing room
+
+    /// The base (badge-less) tile canvas size + the `centerOffset` that
+    /// anchors the pointer tip on the coordinate — the SAME geometry
+    /// `render` produces for a no-badge pin (kept in lock-step with it).
+    ///
+    /// Used to give a place `MKAnnotationView` a stable collision frame at
+    /// init, *before* `prepareForDisplay` draws the real image. MapKit's
+    /// clustering pass measures each view's frame to decide what overlaps;
+    /// our pin only gets a size once its image is drawn (and place photos
+    /// load async after that), so the first cluster pass could run against a
+    /// zero/default frame and skip merging overlapping pins. Seeding the
+    /// known size here makes clustering deterministic from the first render.
+    static var baseFrame: (size: CGSize, centerOffset: CGPoint) {
+        let canvasW = edgePad + side + edgePad
+        let canvasH = edgePad + side + pointerH
+        let tip = CGPoint(x: edgePad + side / 2, y: edgePad + side + pointerH)
+        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
+        return (CGSize(width: canvasW, height: canvasH), offset)
+    }
+
+    /// What fills the tile interior.
+    enum Content {
+        case photo(UIImage)
+        case placeholder(icon: String, fill: UIColor)
+        case count(Int, fill: UIColor)
+    }
+
+    /// Optional badge overhanging the top-right corner.
+    enum Badge {
+        case event       // amber clock — a time-limited place
+        case suggestion  // lime sparkle — an AI proposal
+
+        var fill: UIColor {
+            switch self {
+            case .event: return UIColor(red: 0.98, green: 0.62, blue: 0.10, alpha: 1)
+            case .suggestion: return UIColor(SomedayColors.lime)
+            }
+        }
+        var icon: String {
+            switch self {
+            case .event: return "clock.fill"
+            case .suggestion: return "sparkles"
+            }
+        }
+    }
+
+    /// Render a pin image + the offset that re-centres the pointer TIP on
+    /// the coordinate.
+    ///
+    /// - Parameters:
+    ///   - content: what fills the tile.
+    ///   - edge: colour of the ring + pointer stem. Saved pins/clusters
+    ///     pass `.white`; AI pins pass lime so the frame keeps the
+    ///     suggestion identity.
+    ///   - edgeWidth: ring thickness. Defaults to 2.5 (the classic framed
+    ///     tile); pass 0 for an edge-to-edge photo variant.
+    ///   - badge: optional corner badge.
+    static func render(
+        content: Content,
+        edge: UIColor,
+        edgeWidth: CGFloat = 2.5,
+        badge: Badge? = nil
+    ) -> (UIImage, CGPoint) {
+        let hasBadge = badge != nil
+        // Reserve overhang room top/right only when a badge is present;
+        // otherwise just the hairline breathing room. Left is always the
+        // breathing room so the tile centres predictably.
+        let topPad: CGFloat = hasBadge ? badgeSize / 2 : edgePad
+        let rightPad: CGFloat = hasBadge ? badgeSize / 2 : edgePad
+        let leftPad: CGFloat = edgePad
+
+        let canvasW = leftPad + side + rightPad
+        let canvasH = topPad + side + pointerH
+        let tileRect = CGRect(x: leftPad, y: topPad, width: side, height: side)
+        let tip = CGPoint(x: leftPad + side / 2, y: topPad + side + pointerH)
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
+        let image = renderer.image { rctx in
+            let cg = rctx.cgContext
+
+            // --- Silhouette (rounded tile + pointer). Filled with the edge
+            //     colour, but the content is painted over the tile, so with
+            //     edgeWidth 0 only the pointer stem shows the colour. ---
+            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
+            let pointer = UIBezierPath()
+            let baseY = tileRect.maxY - 0.5
+            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
+            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
+            pointer.addLine(to: tip)
+            pointer.close()
+            silhouette.append(pointer)
+
+            edge.setFill()
+            silhouette.fill()
+            // Soft dark hairline so an edge-to-edge photo still reads as a
+            // discrete tile on a light map. This is the only edge left.
+            UIColor.black.withAlphaComponent(0.10).setStroke()
+            silhouette.lineWidth = 0.5
+            silhouette.stroke()
+
+            // --- Interior, clipped to the (optionally inset) rounded rect ---
+            let innerRect = tileRect.insetBy(dx: edgeWidth, dy: edgeWidth)
+            cg.saveGState()
+            UIBezierPath(roundedRect: innerRect, cornerRadius: max(corner - edgeWidth, 1)).addClip()
+            switch content {
+            case .photo(let photo):
+                drawAspectFill(photo, in: innerRect)
+            case .placeholder(let icon, let fill):
+                fill.setFill()
+                UIRectFill(innerRect)
+                drawCenteredSymbol(icon, pointSize: 17, weight: .semibold, in: innerRect)
+            case .count(let count, let fill):
+                fill.setFill()
+                UIRectFill(innerRect)
+                // Shrink the font for 3-digit clusters so "100+" stays in.
+                let fontSize: CGFloat = count >= 100 ? 13 : 16
+                let text = "\(count)" as NSString
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
+                    .foregroundColor: UIColor.white
+                ]
+                let textSize = text.size(withAttributes: attrs)
+                text.draw(
+                    at: CGPoint(
+                        x: innerRect.midX - textSize.width / 2,
+                        y: innerRect.midY - textSize.height / 2
+                    ),
+                    withAttributes: attrs
+                )
+            }
+            cg.restoreGState()
+
+            // --- Corner badge (white halo + coloured disc + glyph) ---
+            if let badge {
+                let badgeRect = CGRect(
+                    x: tileRect.maxX - badgeSize * 0.62,
+                    y: tileRect.minY - badgeSize * 0.38,
+                    width: badgeSize,
+                    height: badgeSize
+                )
+                UIColor.white.setFill()
+                UIBezierPath(ovalIn: badgeRect.insetBy(dx: -1.0, dy: -1.0)).fill()
+                badge.fill.setFill()
+                UIBezierPath(ovalIn: badgeRect).fill()
+                drawCenteredSymbol(badge.icon, pointSize: 9, weight: .bold, in: badgeRect)
+            }
+        }
+
+        // Anchor the pointer TIP on the coordinate.
+        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
+        return (image, offset)
+    }
+
+    /// Draw `image` filling `rect` (center-crop, no distortion). Caller is
+    /// responsible for clipping to the rounded shape first.
+    static func drawAspectFill(_ image: UIImage, in rect: CGRect) {
+        let s = image.size
+        guard s.width > 0, s.height > 0 else { image.draw(in: rect); return }
+        let scale = max(rect.width / s.width, rect.height / s.height)
+        let drawSize = CGSize(width: s.width * scale, height: s.height * scale)
+        let origin = CGPoint(x: rect.midX - drawSize.width / 2, y: rect.midY - drawSize.height / 2)
+        image.draw(in: CGRect(origin: origin, size: drawSize))
+    }
+
+    /// Tint an SF Symbol white and draw it centred in `rect`.
+    private static func drawCenteredSymbol(_ name: String, pointSize: CGFloat, weight: UIImage.SymbolWeight, in rect: CGRect) {
+        guard let icon = UIImage(
+            systemName: name,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+        )?.withTintColor(.white, renderingMode: .alwaysOriginal) else { return }
+        icon.draw(in: CGRect(
+            x: rect.midX - icon.size.width / 2,
+            y: rect.midY - icon.size.height / 2,
+            width: icon.size.width,
+            height: icon.size.height
+        ))
+    }
+}
+
 // MARK: - Individual Pin
 
 class PlacePinAnnotationView: MKAnnotationView {
@@ -397,9 +822,35 @@ class PlacePinAnnotationView: MKAnnotationView {
         clusteringIdentifier = "place"
         collisionMode = .circle
         displayPriority = .defaultHigh
+        // Seed a stable collision frame up front. MapKit's clustering pass
+        // measures each annotation view's frame to decide what overlaps, but
+        // our tile only gets a size once `prepareForDisplay` draws its image
+        // (and place photos load async after that). Without a size here, the
+        // first cluster pass can run against a zero/default frame and decide
+        // NOT to merge overlapping pins — which is exactly why clustering
+        // looked intermittent on first render. Starting from the known tile
+        // geometry makes the decision deterministic; `prepareForDisplay` then
+        // refreshes the image at the same size.
+        let base = MapPinTile.baseFrame
+        bounds = CGRect(origin: .zero, size: base.size)
+        centerOffset = base.centerOffset
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The red × delete badge overhangs this view's bounds (it sits on
+    /// the tile's top-right corner and pokes up-and-right). UIKit only
+    /// delivers touches to subviews within the parent's bounds, so
+    /// without this override a tap on the overhanging part of the × falls
+    /// straight through and the pin never gets deleted. Explicitly
+    /// hit-test the badge first, then fall back to normal behaviour.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let badge = viewWithTag(ClusteredMapView.deleteButtonTag) {
+            let local = convert(point, to: badge)
+            if badge.bounds.contains(local) { return badge }
+        }
+        return super.hitTest(point, with: event)
+    }
 
     /// Bumped on every `prepareForDisplay`. An in-flight async photo load
     /// captures the value at kickoff and only applies its result if the
@@ -485,31 +936,12 @@ class PlacePinAnnotationView: MKAnnotationView {
         }
     }
 
-    /// Rounded photo-tile pin: a small rounded-square showing the place's
-    /// photo (or a category-coloured placeholder when there's none), wrapped
-    /// in a white edge, with a little pointer tapering to the coordinate.
-    /// Time-limited events keep the amber clock badge on the top-right.
+    /// Rounded photo-tile pin: the place's photo (or a category-coloured
+    /// placeholder) in the shared `MapPinTile` geometry, wrapped in the
+    /// white edge. Time-limited events get the amber clock badge. All
+    /// geometry lives in `MapPinTile.render` — this just supplies the
+    /// place-specific content + accent.
     private static func renderTile(place: Place, listName: String?, photo: UIImage?) -> (UIImage, CGPoint) {
-        let tileSide: CGFloat = 40
-        let corner: CGFloat = 11
-        let border: CGFloat = 2.5          // the white edge thickness
-        let pointerH: CGFloat = 7
-        let pointerHalf: CGFloat = 6.5
-
-        let isEvent = place.isEvent
-        let badgeSize: CGFloat = 15
-        // Reserve room top/right for the event badge overhang (and a hair of
-        // padding for the outer hairline + anti-aliasing on every pin).
-        let topPad: CGFloat = isEvent ? badgeSize / 2 : 1.5
-        let rightPad: CGFloat = isEvent ? badgeSize / 2 : 1.5
-        let leftPad: CGFloat = 1.5
-
-        let canvasW = leftPad + tileSide + rightPad
-        let canvasH = topPad + tileSide + pointerH
-
-        let tileRect = CGRect(x: leftPad, y: topPad, width: tileSide, height: tileSide)
-        let tip = CGPoint(x: leftPad + tileSide / 2, y: topPad + tileSide + pointerH)
-
         // Accent = list colour if the pin belongs to a list, else the
         // default per-place heuristic. Used for the no-photo placeholder.
         let accent: UIColor = {
@@ -519,90 +951,14 @@ class PlacePinAnnotationView: MKAnnotationView {
             return Self.pinColor(for: place)
         }()
 
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
-        let image = renderer.image { rctx in
-            let cg = rctx.cgContext
+        let content: MapPinTile.Content = photo.map { .photo($0) }
+            ?? .placeholder(icon: place.category.icon, fill: accent)
 
-            // --- White silhouette (rounded tile + pointer) = the edge ---
-            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
-            let pointer = UIBezierPath()
-            let baseY = tileRect.maxY - 0.5
-            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
-            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
-            pointer.addLine(to: tip)
-            pointer.close()
-            silhouette.append(pointer)
-
-            UIColor.white.setFill()
-            silhouette.fill()
-            // Subtle outer hairline so the white edge stays legible on light maps.
-            UIColor.black.withAlphaComponent(0.10).setStroke()
-            silhouette.lineWidth = 0.5
-            silhouette.stroke()
-
-            // --- Inner content, clipped to a rounded rect inset by the edge ---
-            let innerRect = tileRect.insetBy(dx: border, dy: border)
-            cg.saveGState()
-            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
-            if let photo {
-                drawAspectFill(photo, in: innerRect)
-            } else {
-                accent.setFill()
-                UIRectFill(innerRect)
-                if let icon = UIImage(
-                    systemName: place.category.icon,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
-                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                    icon.draw(in: CGRect(
-                        x: innerRect.midX - icon.size.width / 2,
-                        y: innerRect.midY - icon.size.height / 2,
-                        width: icon.size.width,
-                        height: icon.size.height
-                    ))
-                }
-            }
-            cg.restoreGState()
-
-            // --- Event clock badge (top-right, overhanging the tile) ---
-            if isEvent {
-                let badgeRect = CGRect(
-                    x: tileRect.maxX - badgeSize * 0.62,
-                    y: tileRect.minY - badgeSize * 0.38,
-                    width: badgeSize,
-                    height: badgeSize
-                )
-                UIColor.white.setFill()
-                UIBezierPath(ovalIn: badgeRect.insetBy(dx: -1.0, dy: -1.0)).fill()
-                UIColor(red: 0.98, green: 0.62, blue: 0.10, alpha: 1).setFill()
-                UIBezierPath(ovalIn: badgeRect).fill()
-                if let icon = UIImage(
-                    systemName: "clock.fill",
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
-                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                    icon.draw(in: CGRect(
-                        x: badgeRect.midX - icon.size.width / 2,
-                        y: badgeRect.midY - icon.size.height / 2,
-                        width: icon.size.width,
-                        height: icon.size.height
-                    ))
-                }
-            }
-        }
-
-        // Anchor the pointer TIP on the coordinate.
-        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
-        return (image, offset)
-    }
-
-    /// Draw `image` filling `rect` (center-crop, no distortion). Caller is
-    /// responsible for clipping to the rounded shape first.
-    fileprivate static func drawAspectFill(_ image: UIImage, in rect: CGRect) {
-        let s = image.size
-        guard s.width > 0, s.height > 0 else { image.draw(in: rect); return }
-        let scale = max(rect.width / s.width, rect.height / s.height)
-        let drawSize = CGSize(width: s.width * scale, height: s.height * scale)
-        let origin = CGPoint(x: rect.midX - drawSize.width / 2, y: rect.midY - drawSize.height / 2)
-        image.draw(in: CGRect(origin: origin, size: drawSize))
+        return MapPinTile.render(
+            content: content,
+            edge: .white,
+            badge: place.isEvent ? .event : nil
+        )
     }
 
     private static func pinColor(for place: Place) -> UIColor {
@@ -747,106 +1103,16 @@ class SuggestionPinAnnotationView: MKAnnotationView {
         centerOffset = result.1
     }
 
-    /// Photo-tile pin for AI suggestions: identical rounded-square / pointer
-    /// geometry to `PlacePinAnnotationView.renderTile`, but the white edge is
-    /// swapped for lime so an AI proposal still reads as distinct from the
-    /// user's saved pins while sharing the same tile language.
+    /// Photo-tile pin for AI suggestions: the same shared `MapPinTile`
+    /// geometry as saved pins, but the edge is lime and a sparkle badge
+    /// always rides the corner — so an AI proposal reads as distinct while
+    /// sharing the one tile language. The no-photo placeholder fills lime
+    /// too.
     private static func renderTile(category: PlaceCategory, photo: UIImage?) -> (UIImage, CGPoint) {
-        let tileSide: CGFloat = 40
-        let corner: CGFloat = 11
-        let border: CGFloat = 2.5
-        let pointerH: CGFloat = 7
-        let pointerHalf: CGFloat = 6.5
-
-        // The sparkle badge ALWAYS overhangs the top-right corner (unlike
-        // the saved pin's clock badge, which is event-only). So we must
-        // reserve the same overhang padding the place renderer reserves for
-        // its event badge — otherwise the badge + its white halo get
-        // clipped off the top and right edges of the canvas. Mirror the
-        // `PlacePinAnnotationView` event-pin layout exactly.
-        let badgeSize: CGFloat = 15
-        let topPad: CGFloat = badgeSize / 2
-        let rightPad: CGFloat = badgeSize / 2
-        let leftPad: CGFloat = 1.5
-
-        let canvasW = leftPad + tileSide + rightPad
-        let canvasH = topPad + tileSide + pointerH
-        let tileRect = CGRect(x: leftPad, y: topPad, width: tileSide, height: tileSide)
-        let tip = CGPoint(x: leftPad + tileSide / 2, y: topPad + tileSide + pointerH)
-
-        let limeUI = UIColor(SomedayColors.lime)
-
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
-        let image = renderer.image { rctx in
-            let cg = rctx.cgContext
-
-            // --- Lime silhouette (rounded tile + pointer) = the edge ---
-            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
-            let pointer = UIBezierPath()
-            let baseY = tileRect.maxY - 0.5
-            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
-            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
-            pointer.addLine(to: tip)
-            pointer.close()
-            silhouette.append(pointer)
-
-            limeUI.setFill()
-            silhouette.fill()
-            UIColor.black.withAlphaComponent(0.10).setStroke()
-            silhouette.lineWidth = 0.5
-            silhouette.stroke()
-
-            // --- Inner content, clipped to a rounded rect inset by the edge ---
-            let innerRect = tileRect.insetBy(dx: border, dy: border)
-            cg.saveGState()
-            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
-            if let photo {
-                PlacePinAnnotationView.drawAspectFill(photo, in: innerRect)
-            } else {
-                limeUI.setFill()
-                UIRectFill(innerRect)
-                if let icon = UIImage(
-                    systemName: category.icon,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
-                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                    icon.draw(in: CGRect(
-                        x: innerRect.midX - icon.size.width / 2,
-                        y: innerRect.midY - icon.size.height / 2,
-                        width: icon.size.width,
-                        height: icon.size.height
-                    ))
-                }
-            }
-            cg.restoreGState()
-
-            // --- Sparkle badge (top-right) so the AI identity stays legible
-            // even when the photo fills the tile ---
-            let badgeRect = CGRect(
-                x: tileRect.maxX - badgeSize * 0.62,
-                y: tileRect.minY - badgeSize * 0.38,
-                width: badgeSize,
-                height: badgeSize
-            )
-            UIColor.white.setFill()
-            UIBezierPath(ovalIn: badgeRect.insetBy(dx: -1.0, dy: -1.0)).fill()
-            limeUI.setFill()
-            UIBezierPath(ovalIn: badgeRect).fill()
-            if let icon = UIImage(
-                systemName: "sparkles",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
-            )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                icon.draw(in: CGRect(
-                    x: badgeRect.midX - icon.size.width / 2,
-                    y: badgeRect.midY - icon.size.height / 2,
-                    width: icon.size.width,
-                    height: icon.size.height
-                ))
-            }
-        }
-
-        // Anchor the pointer TIP on the coordinate.
-        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
-        return (image, offset)
+        let lime = UIColor(SomedayColors.lime)
+        let content: MapPinTile.Content = photo.map { .photo($0) }
+            ?? .placeholder(icon: category.icon, fill: lime)
+        return MapPinTile.render(content: content, edge: lime, badge: .suggestion)
     }
 }
 
@@ -902,73 +1168,11 @@ class ClusterPinAnnotationView: MKAnnotationView {
     }
 
     /// Cluster tile in the **same photo-tile format** as the place pins —
-    /// a rounded square wrapped in a white edge with a little pointer
-    /// tapering to the coordinate — but filled with the accent colour and
-    /// the member count instead of a photo. Geometry mirrors
-    /// `PlacePinAnnotationView.renderTile` so a cluster reads as "a stack
-    /// of those tiles" rather than a different shape entirely.
+    /// a rounded tile with a little pointer tapering to the coordinate —
+    /// filled with the accent colour and the member count instead of a
+    /// photo. Uses the shared `MapPinTile` geometry so a cluster reads as
+    /// "a stack of those tiles" rather than a different shape entirely.
     private static func renderCountTile(count: Int, accent: UIColor) -> (UIImage, CGPoint) {
-        let tileSide: CGFloat = 40
-        let corner: CGFloat = 11
-        let border: CGFloat = 2.5          // the white edge thickness
-        let pointerH: CGFloat = 7
-        let pointerHalf: CGFloat = 6.5
-        let pad: CGFloat = 1.5             // hairline + anti-alias breathing room
-
-        let canvasW = pad + tileSide + pad
-        let canvasH = pad + tileSide + pointerH
-
-        let tileRect = CGRect(x: pad, y: pad, width: tileSide, height: tileSide)
-        let tip = CGPoint(x: pad + tileSide / 2, y: pad + tileSide + pointerH)
-
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: canvasW, height: canvasH))
-        let image = renderer.image { rctx in
-            let cg = rctx.cgContext
-
-            // --- White silhouette (rounded tile + pointer) = the edge ---
-            let silhouette = UIBezierPath(roundedRect: tileRect, cornerRadius: corner)
-            let pointer = UIBezierPath()
-            let baseY = tileRect.maxY - 0.5
-            pointer.move(to: CGPoint(x: tip.x - pointerHalf, y: baseY))
-            pointer.addLine(to: CGPoint(x: tip.x + pointerHalf, y: baseY))
-            pointer.addLine(to: tip)
-            pointer.close()
-            silhouette.append(pointer)
-
-            UIColor.white.setFill()
-            silhouette.fill()
-            UIColor.black.withAlphaComponent(0.10).setStroke()
-            silhouette.lineWidth = 0.5
-            silhouette.stroke()
-
-            // --- Accent fill + count, clipped to the inset rounded rect ---
-            let innerRect = tileRect.insetBy(dx: border, dy: border)
-            cg.saveGState()
-            UIBezierPath(roundedRect: innerRect, cornerRadius: corner - border).addClip()
-            accent.setFill()
-            UIRectFill(innerRect)
-
-            // Shrink the font a touch for 3-digit clusters so "100+" stays
-            // inside the tile.
-            let fontSize: CGFloat = count >= 100 ? 13 : 16
-            let text = "\(count)" as NSString
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: fontSize, weight: .heavy),
-                .foregroundColor: UIColor.white
-            ]
-            let textSize = text.size(withAttributes: attrs)
-            text.draw(
-                at: CGPoint(
-                    x: innerRect.midX - textSize.width / 2,
-                    y: innerRect.midY - textSize.height / 2
-                ),
-                withAttributes: attrs
-            )
-            cg.restoreGState()
-        }
-
-        // Anchor the pointer TIP on the coordinate — same as the place pins.
-        let offset = CGPoint(x: canvasW / 2 - tip.x, y: canvasH / 2 - tip.y)
-        return (image, offset)
+        MapPinTile.render(content: .count(count, fill: accent), edge: .white)
     }
 }

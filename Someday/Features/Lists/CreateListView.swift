@@ -112,7 +112,7 @@ struct CreateListView: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(SomedayColors.charcoal)
                                 .frame(width: 28, height: 28)
-                                .background(.white)
+                                .background(SomedayColors.anthropicWhite)
                                 .clipShape(Circle())
                                 .padding(10)
                         }
@@ -162,7 +162,7 @@ struct CreateListView: View {
                 .focused($nameFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(.white)
+                .background(SomedayColors.anthropicWhite)
                 .cornerRadius(12)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)

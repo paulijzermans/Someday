@@ -12,6 +12,11 @@ struct SomedayApp: App {
     /// first ~1.0s after the window appears, then flips to false and
     /// fades out — revealing the real first screen underneath.
     @State private var showingSplash = true
+    /// Drives the splash balloon's slow wobble — a gentle rocking sway
+    /// (a few degrees each way, autoreversing forever) so the mark feels
+    /// like it's drifting on a breeze rather than sitting still. Flipped
+    /// true in the overlay's `.onAppear`.
+    @State private var balloonWobble = false
 
     init() {
         SomedayFonts.registerAll()
@@ -38,7 +43,7 @@ struct SomedayApp: App {
                 }
                 .animation(.easeInOut(duration: 0.3), value: appState.currentScreen)
 
-                // Brand splash: white background + centered balloon.
+                // Brand splash: Anthropic off-white + centered wordmark.
                 // Stays for ~1.0s on cold launch so the brand mark
                 // registers, then fades out. Tucked inside the ZStack so
                 // it always sits above whatever first screen mounts —
@@ -50,12 +55,12 @@ struct SomedayApp: App {
                 }
             }
             .onAppear {
-                // ~1.0s feels like an intentional brand beat without
-                // dragging. Tuned to match the system launch screen so
-                // the perceived hand-off from LaunchScreen.storyboard /
-                // launch image into SwiftUI is seamless.
+                // ~2.5s brand beat. Long enough that the balloon's slow
+                // wobble reads as a continuous sway (a couple of gentle
+                // swings) rather than a single half-tilt before the screen
+                // fades. Then a calm fade-out.
                 Task {
-                    try? await Task.sleep(for: .milliseconds(1000))
+                    try? await Task.sleep(for: .milliseconds(2500))
                     withAnimation(.easeOut(duration: 0.35)) {
                         showingSplash = false
                     }
@@ -71,24 +76,49 @@ struct SomedayApp: App {
         }
     }
 
-    /// Cold-launch brand splash. Pure white background with the hot-air
-    /// balloon mark centered — same asset used in the import summary's
-    /// bounce animation, so the brand language is consistent end-to-end.
-    /// The slogan sits below the mark so the very first moment of the
-    /// app already reads as a complete brand expression.
+    /// Cold-launch brand splash. The warm Anthropic off-white (`#F0EEE6`)
+    /// fills the whole screen, with the pixel-balloon mark crowning the
+    /// upright "Someday" wordmark, centered in the geometric middle —
+    /// nothing else. A single, calm brand beat (no italic flourish): the
+    /// same mark + wordmark pairing the auth hero wears, so the very first
+    /// moment matches the welcome screen exactly.
     private var splashOverlay: some View {
         ZStack {
-            Color.white
+            SomedayColors.anthropicWhite
                 .ignoresSafeArea()
-            VStack(spacing: 18) {
-                Image("balloon")
+                // Flip the wobble flag the moment the splash mounts. The
+                // repeating animation itself is attached directly to the
+                // rotated Image below via `.animation(_:value:)` — that's the
+                // reliable way to drive a forever-loop. (A `withAnimation`
+                // .repeatForever kicked off here can get cut short by SwiftUI
+                // instead of looping cleanly, which made the balloon visibly
+                // stop swaying partway through the 2.5s hold.)
+                .onAppear { balloonWobble = true }
+            VStack(spacing: 10) {
+                // Pixel-art hot-air-balloon brand mark above the wordmark,
+                // mirroring the auth hero. Same transparent cut-out asset.
+                Image("airballoonPixelated")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 140, height: 140)
-                Text("Save for Someday")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(SomedayColors.greenDark)
-                    .multilineTextAlignment(.center)
+                    .frame(width: 48)
+                    // Gentle rocking sway — ±3.5° around the top so the
+                    // balloon pivots from its crown like it's hanging on a
+                    // breeze. The animation kicks off in the overlay's
+                    // `.onAppear`.
+                    .rotationEffect(.degrees(balloonWobble ? 3.5 : -3.5), anchor: .top)
+                    // Slow, looping sway — eases between the two tilt extremes
+                    // forever so the balloon rocks gently the whole time the
+                    // splash is up. Attached here (rather than via a
+                    // `withAnimation` in `.onAppear`) so the loop runs cleanly
+                    // for the full hold instead of stopping partway.
+                    .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: balloonWobble)
+                    .allowsHitTesting(false)
+                // Upright wordmark — the whole word in the brand (non-
+                // italic) face. No lean, no animation.
+                Text("Someday")
+                    .font(SomedayFonts.brand(size: 30))
+                    .tracking(0.5)
+                    .foregroundColor(SomedayColors.anthropicInk)
             }
         }
     }

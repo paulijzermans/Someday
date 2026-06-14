@@ -58,8 +58,7 @@ struct ImportListView: View {
                         .font(.system(size: 16))
                         .scrollContentBackground(.hidden)
                         .padding(12)
-                        .background(SomedayColors.grayLight)
-                        .cornerRadius(14)
+                        .cleanTile(cornerRadius: 14)
                         .padding(.horizontal, 16)
 
                     if listText.isEmpty {
@@ -95,7 +94,7 @@ struct ImportListView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
-            .background(.white)
+            .background(SomedayColors.anthropicWhite)
             .navigationTitle("Import")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -105,8 +104,9 @@ struct ImportListView: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(SomedayColors.charcoal)
                             .frame(width: 32, height: 32)
-                            .background(SomedayColors.grayLight)
+                            .background(Color.white)
                             .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                     }
                 }
             }

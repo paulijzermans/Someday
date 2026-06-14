@@ -18,6 +18,7 @@
 
 import Anthropic from "npm:@anthropic-ai/sdk@0.30.0";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 const ACTOR_ID = "apify~instagram-scraper";
 const MODEL = "claude-sonnet-4-5";
@@ -61,14 +62,19 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
+  const traceId = extractTraceId(req);
+  const log = createLogger("parse-instagram", traceId);
+
   // -------- 1. Parse request --------
   let url: string;
   try {
     const body = await req.json();
     url = String(body.url ?? "").trim();
   } catch {
+    await log.error("invalid JSON body", { event: "bad_request" });
     return json({ error: "Invalid JSON body" }, 400);
   }
+  await log.info("request_received", { event: "request_received", data: { url } });
   if (!/instagram\.com/.test(url)) {
     return json({ error: "Provide an Instagram URL (instagram.com/...)" }, 400);
   }
@@ -102,7 +108,7 @@ Deno.serve(async (req) => {
     });
     if (!apifyRes.ok) {
       const errText = await apifyRes.text();
-      console.error("Apify error", apifyRes.status, errText.slice(0, 400));
+      await log.error("apify error", { event: "apify_failed", data: { status: apifyRes.status, detail: errText.slice(0, 400), url } });
       return json(
         { error: `Apify returned ${apifyRes.status}`, detail: errText.slice(0, 400) },
         502,
@@ -115,7 +121,7 @@ Deno.serve(async (req) => {
     }
     post = data[0];
   } catch (err) {
-    console.error("Apify fetch failed:", err);
+    await log.error("apify fetch failed", { event: "apify_unreachable", data: { error: String(err), url } });
     return json({ error: "Could not reach scraping service" }, 502);
   }
 
@@ -152,7 +158,7 @@ Deno.serve(async (req) => {
     }
     raw = first.text;
   } catch (err) {
-    console.error("Claude call failed:", err);
+    await log.error("claude call failed", { event: "llm_failed", data: { error: String(err), url } });
     return json({ error: "Extraction failed" }, 502);
   }
 
@@ -163,7 +169,7 @@ Deno.serve(async (req) => {
   const places = extractPlaces(raw).map((p) =>
     displayUrl ? { ...p, imageUrl: displayUrl } : p
   );
-  console.log(`Instagram parse: ${places.length} places for ${url}`);
+  await log.info("parsed places", { event: "completed", data: { places: places.length, url } });
 
   return json({ places, sourceUrl: url });
 });

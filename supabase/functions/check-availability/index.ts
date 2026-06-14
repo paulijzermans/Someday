@@ -29,6 +29,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 interface RequestBody {
   name: string;
@@ -68,11 +69,16 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  const traceId = extractTraceId(req);
+  const log = createLogger("check-availability", traceId);
+  await log.info("request_received", { event: "request_received", data: { method: req.method } });
+
   // ----- Parse input -----
   let body: RequestBody;
   try {
     body = await req.json();
   } catch {
+    await log.error("invalid JSON body", { event: "bad_request" });
     return json({ error: "Invalid JSON body" }, 400);
   }
   if (!body.name || typeof body.name !== "string") {
@@ -101,7 +107,7 @@ Deno.serve(async (req) => {
     .maybeSingle();
 
   if (cacheErr) {
-    console.error("Cache read failed:", cacheErr);
+    await log.error("cache read failed", { event: "cache_read_failed", data: { error: String(cacheErr.message ?? cacheErr) } });
     return jsonResult(unknownResult(body.date, partySize));
   }
 
@@ -113,9 +119,10 @@ Deno.serve(async (req) => {
   if (providerIds.zenchef) {
     try {
       const result = await checkZenchef(providerIds.zenchef, body.date, partySize);
+      await log.info("zenchef ok", { event: "completed", data: { provider: "zenchef" } });
       return jsonResult(result);
     } catch (err) {
-      console.error("Zenchef adapter failed:", err);
+      await log.error("zenchef adapter failed", { event: "adapter_failed", data: { provider: "zenchef", error: String(err) } });
       return jsonResult(errorResult(body.date, partySize, "zenchef"));
     }
   }

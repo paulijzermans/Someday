@@ -15,6 +15,7 @@
 // =============================================================================
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 const ACTOR_ID = "compass~google-maps-extractor";  // ~ is API form of /
 const MAX_PLACES = 100;
@@ -43,14 +44,19 @@ Deno.serve(async (req) => {
     return json({ error: "Method not allowed" }, 405);
   }
 
+  const traceId = extractTraceId(req);
+  const log = createLogger("parse-gmaps", traceId);
+
   // -------- 1. Parse the request --------
   let url: string;
   try {
     const body = await req.json();
     url = String(body.url ?? "").trim();
   } catch {
+    await log.error("invalid JSON body", { event: "bad_request" });
     return json({ error: "Invalid JSON body" }, 400);
   }
+  await log.info("request_received", { event: "request_received", data: { url } });
   if (!url || !/^https?:\/\//i.test(url)) {
     return json({ error: "Missing or invalid 'url'" }, 400);
   }
@@ -89,7 +95,7 @@ Deno.serve(async (req) => {
 
     if (!apifyRes.ok) {
       const errText = await apifyRes.text();
-      console.error("Apify error", apifyRes.status, errText.slice(0, 400));
+      await log.error("apify error", { event: "apify_failed", data: { status: apifyRes.status, detail: errText.slice(0, 400), url } });
       return json(
         { error: `Apify returned ${apifyRes.status}`, detail: errText.slice(0, 400) },
         502,
@@ -97,7 +103,7 @@ Deno.serve(async (req) => {
     }
     dataset = await apifyRes.json();
   } catch (err) {
-    console.error("Apify fetch failed:", err);
+    await log.error("apify fetch failed", { event: "apify_unreachable", data: { error: String(err), url } });
     return json({ error: "Could not reach scraping service" }, 502);
   }
 
@@ -111,7 +117,7 @@ Deno.serve(async (req) => {
     .map(toExtractedPlace)
     .filter((p): p is ExtractedPlace => p !== null);
 
-  console.log(`Parsed ${places.length} places (from ${dataset.length} raw items) for ${url}`);
+  await log.info("parsed places", { event: "completed", data: { places: places.length, rawItems: dataset.length, url } });
   return json({ places, sourceUrl: url });
 });
 

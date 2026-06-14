@@ -71,7 +71,7 @@ struct SavedToastCard: View {
                 .padding(.bottom, 24)
             }
         }
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(20)
         .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
         .padding(.horizontal, 32)
@@ -366,7 +366,7 @@ struct FriendDiscoverySheet: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.white)
+        .background(SomedayColors.anthropicWhite)
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
     }

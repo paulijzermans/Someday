@@ -31,8 +31,10 @@
 // Reuses the same `ANTHROPIC_API_KEY` env var the other functions use.
 // =============================================================================
 
-import Anthropic from "npm:@anthropic-ai/sdk@0.30.0";
+import Anthropic from "npm:@anthropic-ai/sdk@0.65.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createLogger, extractTraceId } from "../_shared/observe.ts";
 
 // Claude Haiku 4.5 — ~4x cheaper than Sonnet 4.5 on both input and output
 // tokens, and fast enough that the streaming UX still feels instant.
@@ -132,6 +134,21 @@ Deno.serve(async (req) => {
     return json({ error: "messages required" }, 400);
   }
 
+  // -------- Trace --------------------------------------------------------
+  // Pull the X-Trace-Id the iOS client minted for this user action (or mint
+  // one) and drop an immediate, AWAITED breadcrumb into the unified stream
+  // BEFORE the SSE stream starts. This matters specifically because chat can
+  // hang mid-stream (see the Accept-Encoding note below): the per-turn
+  // `recordChatDebug` write lives in the stream's `finally`, which never runs
+  // during a hang — but this entry row always lands, so a stalled turn shows
+  // up as "chat request_received with trace X, no completion" in read_debug_log.
+  const traceId = extractTraceId(req);
+  const log = createLogger("chat", traceId);
+  await log.info("request_received", {
+    event: "request_received",
+    data: { messages: body.messages.length },
+  });
+
   // -------- 2. Env -------------------------------------------------------
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!anthropicKey) {
@@ -140,7 +157,28 @@ Deno.serve(async (req) => {
 
   // -------- 3. Build system prompt --------------------------------------
   const systemPrompt = buildSystemPrompt(body.context);
-  const anthropic = new Anthropic({ apiKey: anthropicKey });
+  // `Accept-Encoding: identity` — force an UNCOMPRESSED response. In the
+  // Supabase/Deno edge runtime, the default gzip response stream from the
+  // Anthropic API strands its final decompressed bytes: Deno's streaming
+  // gunzip holds the tail of the gzip member until more data (or EOF) arrives,
+  // but the API keeps the SSE socket alive after `message_stop`, so EOF never
+  // comes. The result was that the LAST few stream events (content_block_stop
+  // / message_delta / message_stop) never surfaced and our consume loop hung
+  // forever — stranding the tool loop, the `selection` event, `done`, and the
+  // debug-row write. Asking for an identity (raw) body means each SSE event is
+  // delivered the instant its bytes hit the wire, so the stream terminates
+  // cleanly. (We still belt-and-suspenders stop on `message_delta` below.)
+  const anthropic = new Anthropic({
+    apiKey: anthropicKey,
+    defaultHeaders: { "accept-encoding": "identity" },
+  });
+
+  // -------- 3b. Identify the caller for usage attribution ---------------
+  // The platform verifies the JWT before we run, so the `sub` claim is a
+  // trustworthy user id. We only decode it (no extra round-trip) to know
+  // which `user_usage` row to bump after the turn. Failure here is
+  // non-fatal — usage accounting must never break the chat reply.
+  const callerUserID = userIDFromAuthHeader(req.headers.get("Authorization"));
 
   // -------- 4. SSE stream + agentic tool loop ---------------------------
   const encoder = new TextEncoder();
@@ -149,10 +187,29 @@ Deno.serve(async (req) => {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch (_e) {
+          // Controller already closed/errored — drop the event rather than throw.
+        }
       };
+
+      // SAFETY NET: if any detached promise in this turn rejects in a way our
+      // local try/catch can't see, an unhandled rejection would tear down the
+      // whole isolate — the client would see the stream just *die* (no `error`
+      // event, no `done`, no debug row). This global handler captures it,
+      // surfaces it to the client, and prevents the isolate crash so the
+      // `finally` (and the debug-row write) still runs. Removed in `finally`.
+      // deno-lint-ignore no-explicit-any
+      const onUnhandled = (ev: any) => {
+        const reason = ev?.reason ?? ev?.error ?? ev;
+        const msg = `unhandledrejection: ${String(reason?.stack ?? reason?.message ?? reason)}`;
+        send("error", { message: msg });
+        try { ev?.preventDefault?.(); } catch (_e) { /* noop */ }
+      };
+      globalThis.addEventListener("unhandledrejection", onUnhandled);
 
       try {
         // Anthropic-format conversation we keep extending as we loop.
@@ -163,6 +220,25 @@ Deno.serve(async (req) => {
           body.messages.map((m) => ({ role: m.role, content: m.content }));
 
         let stepCounter = 0;
+
+        // Running total of AI tokens this turn (input + output, summed
+        // across every loop iteration). Flushed once to `user_usage` after
+        // the loop so a multi-tool turn counts as one cumulative write.
+        let tokensThisTurn = 0;
+
+        // -------- observability accumulators (chat_debug_log) --------
+        // We collect a per-turn trace as the stream runs, then write ONE
+        // row to `chat_debug_log` in the finally below (best-effort, never
+        // breaks the reply). This is the queryable "what did the model
+        // actually do" feed — see migration 20260613173000_chat_debug_log.
+        const dbgTools: string[] = [];
+        let dbgReplyText = "";
+        // deno-lint-ignore no-explicit-any
+        let dbgSelection: any = null;
+        let dbgError: string | null = null;
+        let dbgIterations = 0;
+        const dbgUserMessage =
+          [...body.messages].reverse().find((m) => m.role === "user")?.content ?? null;
 
         // NOTE: we used to emit two unconditional "scoping" steps
         // here — "Searching your lists" with every list pill and
@@ -181,14 +257,32 @@ Deno.serve(async (req) => {
         // happens — and nothing when there isn't any.
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+          dbgIterations = iter + 1;
           // Per-iteration map: block index → step ID. We use it to emit
           // step_done events at the end of the iteration when we know the
           // model has finished writing this tool call.
           const stepIDByBlockIndex = new Map<number, string>();
 
-          const ms = anthropic.messages.stream({
+          // NOTE: we ask the SDK only to BUILD + SEND the request (auth, URL,
+          // the big tools array) via `.asResponse()`, which hands back the raw
+          // `Response` WITHOUT the SDK consuming/parsing the SSE body. We then
+          // parse the event stream by hand below. This is deliberate: neither
+          // the `messages.stream()` helper (its `finalMessage()` never
+          // resolves) NOR the low-level async-iterable (`for await` /
+          // `.next()`) terminate in the Supabase/Deno edge runtime — the
+          // Anthropic API keeps the SSE socket alive after `message_stop`, and
+          // the SDK's line-buffering decoder strands its final event(s) waiting
+          // for an EOF / next chunk that never comes. That single hang
+          // stranded EVERYTHING after the text: the tool loop, the `selection`
+          // event, `done`, and the debug-row write (the chat only LOOKED alive
+          // because text streams before the block). Reading the raw body
+          // ourselves, we process each complete `\n\n`-delimited event the
+          // instant its bytes arrive and stop the moment we see the terminal
+          // `message_delta`/`message_stop` — never issuing the read that hangs.
+          const response = await anthropic.messages.create({
             model: MODEL,
             max_tokens: 1024,
+            stream: true,
             system: systemPrompt,
             tools: [
               {
@@ -357,6 +451,38 @@ Deno.serve(async (req) => {
                 },
               },
               {
+                name: "ask_selection",
+                description:
+                  "Ask the user a short question by showing them tappable option BUTTONS instead of expecting them to type a free-text reply. Use this WHENEVER a request is open-ended or under-specified and the missing information is a small, listable set of choices — vibe, cuisine, budget band, neighbourhood, party size, time of day, indoor/outdoor, etc. (e.g. 'where should I go tonight?', 'recommend a place', 'surprise me', 'I'm bored'). This renders an interactive selection box in the chat; the user's pick(s) come back as their next message, after which you continue (usually with geocoded `someday://suggest` pins). Prefer this over writing an open-ended question in prose. Call it on its own turn — a one-line lead-in of text is fine, but the buttons ARE the question, so don't also list the options as text. Don't use it when you already have enough to answer, or when a pin is selected and the user asked a direct factual question about it.",
+                input_schema: {
+                  type: "object",
+                  properties: {
+                    prompt: {
+                      type: "string",
+                      description:
+                        "The question shown above the buttons, e.g. 'What kind of evening are you after?'.",
+                    },
+                    options: {
+                      type: "array",
+                      description:
+                        "2–6 SHORT option labels (a few words each), e.g. ['Cocktail bar','Natural wine','Cosy pub','Late-night eats'].",
+                      items: { type: "string" },
+                    },
+                    multi: {
+                      type: "boolean",
+                      description:
+                        "true → the user can pick SEVERAL options and tap a button to submit (use when answers combine, e.g. which vibes appeal). false → single-choice: tapping one option submits instantly (use for mutually-exclusive questions). Default false.",
+                    },
+                    submit_label: {
+                      type: "string",
+                      description:
+                        "Only used when multi=true: the commit button label, e.g. 'Show picks' or 'Next'. Defaults to 'Next'.",
+                    },
+                  },
+                  required: ["prompt", "options"],
+                },
+              },
+              {
                 type: "web_search_20250305",
                 name: "web_search",
                 max_uses: 3,
@@ -364,38 +490,153 @@ Deno.serve(async (req) => {
               } as any,
             ],
             messages: conversation,
-          });
+          }).asResponse();
 
-          // Live-stream events to the client as they fire.
+          // --- Parse the raw SSE body ourselves and assemble the final
+          // assistant message. We reconstruct exactly what `finalMessage()`
+          // would have returned: the ordered content blocks (text + tool_use,
+          // with their input JSON re-parsed from the streamed
+          // `input_json_delta` fragments), the stop_reason, and token usage.
           // deno-lint-ignore no-explicit-any
-          ms.on("streamEvent", (event: any) => {
-            if (event.type === "content_block_start") {
-              const block = event.content_block;
-              if (
-                block?.type === "tool_use" ||
-                block?.type === "server_tool_use"
-              ) {
-                stepCounter += 1;
-                const stepID = `step_${stepCounter}`;
-                stepIDByBlockIndex.set(event.index, stepID);
-                send("step", {
-                  id: stepID,
-                  icon: stepIcon(block.name),
-                  label: stepLabel(block),
-                  // Raw tool name — lets the eval harness assert which
-                  // tools fired and lets client-side analytics attribute
-                  // a step to a capability. iOS ignores unknown keys.
-                  tool: block.name,
-                });
+          const blocks: any[] = []; // indexed by event.index
+          const partialJSON: Record<number, string> = {};
+          let stopReason: string | null = null;
+          let inputTokens = 0;
+          let outputTokens = 0;
+
+          // Process one decoded Anthropic stream event. Returns true when the
+          // turn is terminal (`message_delta` — which carries the final
+          // stop_reason + usage — or `message_stop`), so the reader below can
+          // stop the INSTANT it has what it needs and never issue the read
+          // that would hang on the kept-alive socket.
+          // deno-lint-ignore no-explicit-any
+          const handleEvent = (event: any): boolean => {
+            if (event.type === "message_stop") return true;
+            if (event.type === "message_start") {
+              inputTokens += event.message?.usage?.input_tokens ?? 0;
+              outputTokens += event.message?.usage?.output_tokens ?? 0;
+            } else if (event.type === "content_block_start") {
+              // Shallow copy so we can mutate text/input as deltas arrive.
+              const block = { ...event.content_block };
+              blocks[event.index] = block;
+              if (block?.type === "tool_use" || block?.type === "server_tool_use") {
+                // Trace EVERY tool the model reaches for (incl. ask_selection,
+                // whose step we suppress) for the debug log.
+                if (block?.name) dbgTools.push(block.name);
+                partialJSON[event.index] = "";
+                if (block?.name !== "ask_selection") {
+                  // `ask_selection` has no "work" to show — the selection box
+                  // it produces IS the visible output, so a "✓ …" step above
+                  // it would just be noise. Skip the step for it.
+                  stepCounter += 1;
+                  const stepID = `step_${stepCounter}`;
+                  stepIDByBlockIndex.set(event.index, stepID);
+                  send("step", {
+                    id: stepID,
+                    icon: stepIcon(block.name),
+                    label: stepLabel(block),
+                    tool: block.name,
+                  });
+                }
               }
             } else if (event.type === "content_block_delta") {
-              if (event.delta?.type === "text_delta") {
-                send("text", { delta: event.delta.text });
+              const d = event.delta;
+              if (d?.type === "text_delta") {
+                const b = blocks[event.index];
+                if (b && b.type === "text") b.text = (b.text ?? "") + d.text;
+                dbgReplyText += d.text;
+                send("text", { delta: d.text });
+              } else if (d?.type === "input_json_delta") {
+                partialJSON[event.index] = (partialJSON[event.index] ?? "") +
+                  (d.partial_json ?? "");
+              }
+            } else if (event.type === "content_block_stop") {
+              const b = blocks[event.index];
+              if (b && (b.type === "tool_use" || b.type === "server_tool_use")) {
+                const raw = partialJSON[event.index] ?? "";
+                if (raw.trim().length > 0) {
+                  try {
+                    b.input = JSON.parse(raw);
+                  } catch (_e) {
+                    // Truncated/invalid tool input — leave the block's initial
+                    // input ({}) so the handler degrades gracefully.
+                  }
+                }
+              }
+            } else if (event.type === "message_delta") {
+              if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
+              outputTokens += event.usage?.output_tokens ?? 0;
+              // Terminal: everything we need is in hand.
+              return true;
+            }
+            return false;
+          };
+
+          // Hand-rolled SSE reader. We split the raw body on the `\n\n` event
+          // boundary and parse each event's `data:` JSON as soon as a chunk
+          // delivers it — no SDK line-buffer lag — and stop the moment
+          // `handleEvent` reports the turn is terminal, WITHOUT a trailing read
+          // (the read that would block forever on the kept-alive socket).
+          let done = false;
+          try {
+            const body = response.body;
+            if (!body) throw new Error("no response body");
+            const reader = body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            while (!done) {
+              const { value, done: readerDone } = await reader.read();
+              if (readerDone) break;
+              buf += decoder.decode(value, { stream: true });
+              let nl: number;
+              while ((nl = buf.indexOf("\n\n")) !== -1) {
+                const rawEvent = buf.slice(0, nl);
+                buf = buf.slice(nl + 2);
+                // Concatenate any `data:` lines (SSE allows multi-line data).
+                const dataStr = rawEvent
+                  .split("\n")
+                  .filter((l) => l.startsWith("data:"))
+                  .map((l) => l.slice(5).trimStart())
+                  .join("");
+                if (!dataStr) continue;
+                // deno-lint-ignore no-explicit-any
+                let evt: any;
+                try {
+                  evt = JSON.parse(dataStr);
+                } catch (_e) {
+                  continue; // skip non-JSON keep-alive/comment frames
+                }
+                if (evt?.type === "error") {
+                  throw new Error(
+                    `anthropic stream error: ${JSON.stringify(evt.error ?? evt)}`,
+                  );
+                }
+                if (handleEvent(evt)) {
+                  done = true;
+                  break;
+                }
               }
             }
-          });
+            // Release the upstream socket without awaiting — we have everything
+            // we need; `cancel()` may hang on the kept-alive socket otherwise.
+            reader.cancel().catch(() => {});
+          } catch (streamErr) {
+            dbgError = dbgError ?? `stream: ${String(streamErr)}`;
+            send("error", { message: dbgError });
+            break;
+          }
 
-          const message = await ms.finalMessage();
+          const message = {
+            // Compact out any holes left by the index-keyed array.
+            // deno-lint-ignore no-explicit-any
+            content: blocks.filter((b: any) => b != null),
+            stop_reason: stopReason,
+            usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+          };
+
+          // Accumulate token spend for this turn.
+          tokensThisTurn += (message.usage?.input_tokens ?? 0) +
+            (message.usage?.output_tokens ?? 0);
 
           // Tick every step we surfaced this iteration. By the time
           // finalMessage() resolves, all server tools (web_search) have
@@ -422,11 +663,48 @@ Deno.serve(async (req) => {
             break;
           }
 
+          // `ask_selection` is TERMINAL. Instead of feeding a tool_result and
+          // looping, we emit the structured selection box to the client and
+          // end the turn — the box waits for the user, whose tap arrives as
+          // their next message (a fresh turn). Because iOS sends text-only
+          // history, the dangling tool_use never needs a matching
+          // tool_result. If the model bundled other tools this turn, we
+          // ignore them: the box is the whole point of the turn.
+          // deno-lint-ignore no-explicit-any
+          const selectionBlock = toolUseBlocks.find((b: any) => b.name === "ask_selection");
+          if (selectionBlock) {
+            const inp = selectionBlock.input ?? {};
+            const options = Array.isArray(inp.options)
+              ? inp.options.map((o: unknown) => String(o)).filter((o: string) => o.trim().length > 0)
+              : [];
+            if (options.length >= 2) {
+              const selectionPayload = {
+                prompt: typeof inp.prompt === "string" ? inp.prompt : null,
+                options,
+                multi: inp.multi === true,
+                submitLabel: typeof inp.submit_label === "string" && inp.submit_label.length > 0
+                  ? inp.submit_label
+                  : "Next",
+              };
+              dbgSelection = selectionPayload;
+              send("selection", selectionPayload);
+            }
+            // Terminal either way — a malformed call (no valid options) just
+            // ends the turn rather than crashing the unknown-tool path.
+            break;
+          }
+
           // Push the assistant's tool-using turn into the conversation,
           // then a user turn with all tool_result blocks. Loop again.
+          // Drop any empty text blocks first — the API rejects assistant
+          // turns that contain a `{type:"text", text:""}` block (which a
+          // tool-only turn can produce), and they carry no information.
           conversation.push({
             role: "assistant",
-            content: message.content,
+            // deno-lint-ignore no-explicit-any
+            content: message.content.filter((b: any) =>
+              !(b.type === "text" && (!b.text || b.text.length === 0))
+            ),
           });
           // `executeClientTool` is now async (geocode_address hits
           // Nominatim, the mutation tools emit SSE events back). Each
@@ -481,8 +759,32 @@ Deno.serve(async (req) => {
         send("done", {});
       } catch (err) {
         console.error("Chat stream failed:", err);
+        dbgError = String(err);
         send("error", { message: String(err) });
       } finally {
+        // Flush token usage for this turn. Best-effort and awaited inside
+        // the finally so it runs whether the turn completed or errored
+        // mid-stream (the user still spent those tokens). Never throws —
+        // `recordTokenUsage` swallows its own failures.
+        await recordTokenUsage(callerUserID, tokensThisTurn);
+        // Write the per-turn observability row. Best-effort, never throws.
+        await recordChatDebug({
+          userID: callerUserID,
+          userMessage: dbgUserMessage,
+          tools: dbgTools,
+          selection: dbgSelection,
+          replyText: dbgReplyText,
+          error: dbgError,
+          meta: { traceId, tokens: tokensThisTurn, iterations: dbgIterations, model: MODEL },
+        });
+        // Mirror the turn outcome into the unified cross-surface stream so a
+        // chat trace reads out alongside iOS + other-function breadcrumbs.
+        // (Best-effort; on a mid-stream hang this finally never runs and the
+        // entry `request_received` row is what flags the stall.)
+        await (dbgError
+          ? log.error("chat turn failed", { event: "turn_failed", userId: callerUserID, data: { error: dbgError, tools: dbgTools, iterations: dbgIterations } })
+          : log.info("chat turn complete", { event: "completed", userId: callerUserID, data: { tools: dbgTools, iterations: dbgIterations, tokens: tokensThisTurn, hadSelection: dbgSelection != null } }));
+        globalThis.removeEventListener("unhandledrejection", onUnhandled);
         controller.close();
       }
     },
@@ -500,6 +802,105 @@ Deno.serve(async (req) => {
     },
   });
 });
+
+// ---------------------- usage accounting ----------------------
+
+/// Decode the `sub` (user id) claim from a `Bearer <jwt>` header without
+/// verifying the signature — the platform already verified the JWT before
+/// invoking the function, so by the time we're here the token is trusted.
+/// Returns null for anonymous/service-role calls or a malformed header, in
+/// which case we simply skip usage attribution.
+function userIDFromAuthHeader(header: string | null): string | null {
+  if (!header) return null;
+  const token = header.replace(/^Bearer\s+/i, "").trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    // Base64URL → JSON. atob handles standard base64; swap the URL-safe
+    // chars and pad before decoding.
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+    const payload = JSON.parse(atob(b64 + pad));
+    const sub = payload?.sub;
+    return typeof sub === "string" && sub.length > 0 ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/// Add `tokens` to the user's lifetime `tokens_used` counter, creating the
+/// row on first use. Uses the service-role key so it can write past RLS
+/// (ordinary clients have no INSERT/UPDATE policy on `user_usage`). Fully
+/// best-effort: any missing env, missing user, or network error is logged
+/// and swallowed so chat replies never depend on the accounting write.
+async function recordTokenUsage(userID: string | null, tokens: number): Promise<void> {
+  if (!userID || tokens <= 0) return;
+  const url = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !serviceKey) return;
+  try {
+    const admin = createClient(url, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    // Read-modify-write the single row. Tokens-per-turn is low-frequency
+    // per user, so the race window is negligible; the import path's
+    // `increment_usage` RPC is the atomic option if contention ever shows.
+    const { data, error: readErr } = await admin
+      .from("user_usage")
+      .select("tokens_used")
+      .eq("user_id", userID)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    const next = (data?.tokens_used ?? 0) + tokens;
+    const { error: upErr } = await admin
+      .from("user_usage")
+      .upsert(
+        { user_id: userID, tokens_used: next, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      );
+    if (upErr) throw upErr;
+  } catch (err) {
+    console.error("recordTokenUsage failed:", err);
+  }
+}
+
+/// Write one per-turn row to `chat_debug_log` for the observability loop.
+/// Uses the service-role key so it can INSERT past RLS (the table has no
+/// client write policy). Fully best-effort: any missing env or error is
+/// logged and swallowed so chat replies never depend on the debug write.
+/// See migration 20260613173000_chat_debug_log.sql.
+async function recordChatDebug(entry: {
+  userID: string | null;
+  userMessage: string | null;
+  tools: string[];
+  // deno-lint-ignore no-explicit-any
+  selection: any;
+  replyText: string;
+  error: string | null;
+  // deno-lint-ignore no-explicit-any
+  meta: any;
+}): Promise<void> {
+  const url = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !serviceKey) return;
+  try {
+    const admin = createClient(url, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await admin.from("chat_debug_log").insert({
+      user_id: entry.userID,
+      user_message: entry.userMessage,
+      tools: entry.tools,
+      selection: entry.selection,
+      reply_text: entry.replyText,
+      error: entry.error,
+      meta: entry.meta,
+    });
+    if (error) throw error;
+  } catch (err) {
+    console.error("recordChatDebug failed:", err);
+  }
+}
 
 // ---------------------- telemetry (OBSERVE) ----------------------
 
@@ -1162,7 +1563,19 @@ FILE-IT OFFER — when the user is looking at ONE of their OWN saved places (it'
 
   • The \`<UUID>\` is the saved place's full id from the \`id=…\` prefix in the digest. This only works for SAVED places (someday://place pins) — never for a someday://suggest venue that isn't on their map yet.
   • Tapping opens the Lists overlay in toggle mode (each list the pin is already in shows a coloured border; tap to add/remove). It does NOT create a list — it's for organising an EXISTING pin into EXISTING lists.
-  • Skip it if the place is already in a fitting list, if the user is just asking a quick fact, or if you've already offered for this pin. At most once per pin. Keep it to a short trailing sentence.${customBlock}`;
+  • Skip it if the place is already in a fitting list, if the user is just asking a quick fact, or if you've already offered for this pin. At most once per pin. Keep it to a short trailing sentence.
+
+ASK WITH A SELECTION BOX (\`ask_selection\` tool) — this is your DEFAULT move whenever a request is open-ended or under-specified. Instead of writing a paragraph of open questions and hoping for a tidy reply, call the \`ask_selection\` tool: the app renders tappable option BUTTONS and the user's pick(s) come back as their next message.
+  · \`multi: false\` → single-choice: the user taps ONE option and it submits instantly. Use for mutually-exclusive questions ("Which neighbourhood?").
+  · \`multi: true\` → multi-choice: options toggle and a submit button (set \`submit_label\`, e.g. "Show picks") sends them all. Use when several answers can combine ("Which vibes appeal?").
+  · Provide 2–6 SHORT \`options\` (a few words each). \`prompt\` is the question shown above the buttons. The buttons ARE the options — never also list them as text.
+  · A one-line lead-in of normal text BEFORE the tool call is fine ("Let me narrow it down —"); then call the tool. Call it ON ITS OWN — it ends your turn, and the box waits for the user.
+  WHEN TO REACH FOR IT (lean IN — prefer the tool over a text question):
+  · The request is broad or vague — "find me somewhere to go", "I'm bored", "where should I eat", "recommend a place", "plan my night", "surprise me", "what's good around here". These are EXACTLY the cases to open with \`ask_selection\` to pin down the missing dimension (vibe, cuisine, budget, indoor/outdoor, time of day, party size…).
+  · You're about to ask ANY question whose good answers are a small, listable set. If you'd phrase it as "are you thinking X or Y?" — call \`ask_selection\` instead.
+  · Default bias: if a request is open-ended and you'd otherwise need to ask something to answer well, call \`ask_selection\` rather than writing a prose question. A prose follow-up question on an open-ended request is the wrong call.
+  WHEN NOT TO: the user already gave you enough to answer (just answer, with \`someday://suggest\` pins); a pin is already selected and they asked a direct factual question about it; or the choice wouldn't actually change your answer.
+  · At MOST ONE \`ask_selection\` per turn. After the user picks, their choice arrives as a normal user message — continue from there (usually with \`someday://suggest\` pins). If more narrowing is needed, you may call \`ask_selection\` again on the NEXT turn.${customBlock}`;
 }
 
 function renderFullPlace(p: PlaceDigest): string {
