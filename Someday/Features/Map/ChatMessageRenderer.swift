@@ -43,6 +43,10 @@ enum InlineToken: Identifiable, Equatable {
     /// `someday://show?...` — a map-navigation pill (a country, city,
     /// neighbourhood, landmark). Tap flies the camera there; no pin.
     case showLink(name: String, lat: Double, lon: Double, span: Double?)
+    /// `someday://route?from=<id>&to=<id>` — a "draw the route" pill
+    /// between two saved pins. The label is the human text (e.g.
+    /// "Café X → De Kas"); the ids drive the map's MKDirections call.
+    case routeLink(label: String, fromID: String, toID: String)
 
     /// Identity per occurrence so SwiftUI can diff across renders.
     var id: String {
@@ -53,6 +57,7 @@ enum InlineToken: Identifiable, Equatable {
         case .suggestionLink(let n, _, let la, let lo): return "sl:\(la),\(lo):\(n)"
         case .webLink(_, let url):                      return "wl:\(url.absoluteString)"
         case .showLink(let n, let la, let lo, _):       return "sh:\(la),\(lo):\(n)"
+        case .routeLink(let l, let f, let t):           return "rt:\(f)>\(t):\(l)"
         }
     }
 }
@@ -260,6 +265,16 @@ enum ChatMessageParser {
             let span = q("span").flatMap(Double.init)
             return .showLink(name: name, lat: lat, lon: lon, span: span)
         }
+        if urlString.hasPrefix("someday://route") {
+            // `someday://route?from=<id>&to=<id>` — draw a route between
+            // two saved pins. The label carries the human text.
+            guard let comps = URLComponents(string: urlString) else { return nil }
+            let items = comps.queryItems ?? []
+            func q(_ k: String) -> String? { items.first(where: { $0.name == k })?.value }
+            guard let from = q("from"), let to = q("to"),
+                  !from.isEmpty, !to.isEmpty else { return nil }
+            return .routeLink(label: label, fromID: from, toID: to)
+        }
         if let url = URL(string: urlString),
            let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https" {
@@ -438,6 +453,49 @@ struct ShowPillView: View {
             )
             .overlay(
                 Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Inline "draw the route" pill. Tapping rebuilds the
+/// `someday://route?from=…&to=…` URL and hands it to `openURL`, which
+/// `MapHomeView.handleChatLinkTap` decodes into a `.route` action and
+/// runs `vm.showRoute`. Brand-blue to match the route line on the map.
+struct RoutePillView: View {
+    let label: String
+    let fromID: String
+    let toID: String
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            var comps = URLComponents()
+            comps.scheme = "someday"
+            comps.host = "route"
+            comps.queryItems = [
+                URLQueryItem(name: "from", value: fromID),
+                URLQueryItem(name: "to", value: toID)
+            ]
+            if let url = comps.url { openURL(url) }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(SomedayColors.primary)
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(SomedayColors.primary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(SomedayColors.primary.opacity(0.14))
+            )
+            .overlay(
+                Capsule().stroke(SomedayColors.primary.opacity(0.35), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -1393,6 +1451,10 @@ struct ChatMessageBody: View {
             // Camera-only "take me there" pill — tapping flies the map to
             // an arbitrary place without dropping a pin or opening a card.
             ShowPillView(name: name, lat: lat, lon: lon, span: span)
+        case .routeLink(let label, let fromID, let toID):
+            // "Draw the route" pill — tapping routes through
+            // `someday://route?...` → MapHomeView → `vm.showRoute`.
+            RoutePillView(label: label, fromID: fromID, toID: toID)
         case .webLink(let name, let url):
             ChatLinkText(name: name, url: url)
         }

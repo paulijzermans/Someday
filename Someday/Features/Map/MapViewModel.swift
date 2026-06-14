@@ -261,6 +261,14 @@ final class MapViewModel {
     /// the whole route on demand without the model re-emitting every stop.
     var activeItinerary: Itinerary?
 
+    /// The active point-to-point route between two saved pins, if any.
+    /// Non-nil while a route is on screen — drives the polyline overlay in
+    /// `ClusteredMapView` AND the floating route readout (mode toggle +
+    /// ETA/distance) in `MapHomeView`. Set by `showRoute`, recomputed by
+    /// `setRouteMode`, cleared by `clearRoute`. Backs the
+    /// `someday://route?from=…&to=…` chat action.
+    var activeRoute: ActiveRoute?
+
     /// Debounce token for the city resolve. Each `regionDidChange` call
     /// cancels the previous one so we only fire the SDK request after
     /// the user stops panning for ~300ms.
@@ -1463,6 +1471,163 @@ final class MapViewModel {
             peekHighlightPlaceID = nil
         }
         Haptics.tap()
+    }
+
+    // MARK: - Routing (point-to-point between two saved pins)
+
+    /// Begin showing a route between two of the user's saved pins. Resolves
+    /// both ids to live places, frames the pair, and kicks off the first
+    /// `MKDirections` calculation (defaulting to walking — this is a
+    /// city/neighbourhood app, so a walk is the most common intent; the
+    /// user can flip to driving/transit from the readout). Returns false —
+    /// so the chat action can `.discard` — when either id isn't a saved pin
+    /// or the two resolve to the same place (a route to yourself is a no-op).
+    @MainActor
+    @discardableResult
+    func showRoute(fromID: String, toID: String) -> Bool {
+        guard
+            let from = places.first(where: { $0.id == fromID }),
+            let to = places.first(where: { $0.id == toID }),
+            from.id != to.id
+        else { return false }
+
+        activeRoute = ActiveRoute(
+            fromID: from.id,
+            toID: to.id,
+            fromName: from.name,
+            toName: to.name,
+            fromCoord: from.coordinate,
+            toCoord: to.coordinate,
+            mode: .walking,
+            polyline: nil,
+            travelTime: nil,
+            distance: nil,
+            isLoading: true,
+            errorMessage: nil
+        )
+
+        // Clear competing bottom-slot / search UI so the route + its
+        // readout own the screen, same hygiene as `flyTo`.
+        selectedPlace = nil
+        showSearch = false
+        peekHighlightPlaceID = nil
+
+        // Frame the straight-line pair immediately for instant feedback;
+        // `computeRoute` reframes to the actual path's bounds once it lands.
+        frameRoute(from: from.coordinate, to: to.coordinate)
+        Haptics.tap()
+        Task { await computeRoute() }
+        return true
+    }
+
+    /// Switch the active route's travel mode (walk ⇄ drive ⇄ transit) and
+    /// recompute. No-op if there's no route or the mode is unchanged.
+    @MainActor
+    func setRouteMode(_ mode: RouteTravelMode) {
+        guard var route = activeRoute, route.mode != mode else { return }
+        route.mode = mode
+        route.isLoading = true
+        route.errorMessage = nil
+        route.polyline = nil
+        route.travelTime = nil
+        route.distance = nil
+        activeRoute = route
+        Haptics.tap()
+        Task { await computeRoute() }
+    }
+
+    /// Tear down the active route — removes the polyline overlay and the
+    /// floating readout. The map stays where it is (the user is presumably
+    /// looking at the area they routed across).
+    @MainActor
+    func clearRoute() {
+        guard activeRoute != nil else { return }
+        activeRoute = nil
+        Haptics.tap()
+    }
+
+    /// Run an `MKDirections` calculation for the current route + mode and
+    /// fold the result back onto `activeRoute`. Guards against races: if
+    /// the user cleared the route or changed mode while the async request
+    /// was in flight, the stale result is dropped (we re-read `activeRoute`
+    /// and bail unless it still matches the request we issued).
+    @MainActor
+    private func computeRoute() async {
+        guard let pending = activeRoute else { return }
+
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: pending.fromCoord))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: pending.toCoord))
+        request.transportType = pending.mode.transportType
+
+        func stillCurrent() -> Bool {
+            guard let cur = activeRoute else { return false }
+            return cur.fromID == pending.fromID
+                && cur.toID == pending.toID
+                && cur.mode == pending.mode
+        }
+
+        do {
+            let response = try await MKDirections(request: request).calculate()
+            guard stillCurrent(), var route = activeRoute else { return }
+            guard let best = response.routes.first else {
+                route.isLoading = false
+                route.errorMessage = "No \(pending.mode.noun) route between these two."
+                activeRoute = route
+                return
+            }
+            route.polyline = best.polyline
+            route.travelTime = best.expectedTravelTime
+            route.distance = best.distance
+            route.isLoading = false
+            route.errorMessage = nil
+            activeRoute = route
+            // Reframe to the actual path's bounds — a curved walk/drive can
+            // bow well outside the straight-line box we framed on entry.
+            frameRoute(boundingMapRect: best.polyline.boundingMapRect)
+        } catch {
+            guard stillCurrent(), var route = activeRoute else { return }
+            route.isLoading = false
+            // MapKit returns a "directions not available" error for transit
+            // in unsupported regions — surface a human-readable hint.
+            route.errorMessage = "Couldn't find a \(pending.mode.noun) route here."
+            activeRoute = route
+        }
+    }
+
+    /// Frame the camera around two coordinates (the straight-line pair) —
+    /// used the instant a route starts, before the path is known.
+    @MainActor
+    private func frameRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
+        let minLat = min(from.latitude, to.latitude)
+        let maxLat = max(from.latitude, to.latitude)
+        let minLon = min(from.longitude, to.longitude)
+        let maxLon = max(from.longitude, to.longitude)
+        // 1.8× the extent so the two pins aren't jammed against the edges,
+        // with a floor so two near-identical coords don't over-zoom.
+        let spanLat = max((maxLat - minLat) * 1.8, 0.006)
+        let spanLon = max((maxLon - minLon) * 1.8, 0.006)
+        withAnimation(SomedayAnimations.inTileNav) {
+            region = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(
+                    latitude: (minLat + maxLat) / 2,
+                    longitude: (minLon + maxLon) / 2
+                ),
+                span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+            )
+        }
+    }
+
+    /// Frame the camera to a route polyline's bounding rect with padding —
+    /// used once the real path lands so the whole route is visible.
+    @MainActor
+    private func frameRoute(boundingMapRect rect: MKMapRect) {
+        var framed = MKCoordinateRegion(rect)
+        framed.span.latitudeDelta = max(framed.span.latitudeDelta * 1.4, 0.006)
+        framed.span.longitudeDelta = max(framed.span.longitudeDelta * 1.4, 0.006)
+        withAnimation(SomedayAnimations.inTileNav) {
+            region = framed
+        }
     }
 
     @MainActor
@@ -2919,6 +3084,75 @@ enum AvailabilityState: Equatable {
     case idle
     case loading
     case ready(AvailabilityResult)
+}
+
+/// How to travel a point-to-point route. Maps 1:1 onto MapKit's
+/// `MKDirectionsTransportType`. `walking` is the default because Someday
+/// is a city/neighbourhood app — most "how do I get from X to Y" asks are
+/// short hops on foot — but the readout lets the user flip to driving or
+/// transit (transit availability varies by region; MapKit returns an
+/// error where it has no transit data, which the readout surfaces).
+enum RouteTravelMode: String, CaseIterable, Equatable {
+    case walking
+    case driving
+    case transit
+
+    var transportType: MKDirectionsTransportType {
+        switch self {
+        case .walking: return .walking
+        case .driving: return .automobile
+        case .transit: return .transit
+        }
+    }
+
+    /// Short label for the segmented toggle.
+    var label: String {
+        switch self {
+        case .walking: return "Walk"
+        case .driving: return "Drive"
+        case .transit: return "Transit"
+        }
+    }
+
+    /// Lower-case noun for error copy ("No walking route…").
+    var noun: String {
+        switch self {
+        case .walking: return "walking"
+        case .driving: return "driving"
+        case .transit: return "transit"
+        }
+    }
+
+    /// SF Symbol for the toggle button.
+    var icon: String {
+        switch self {
+        case .walking: return "figure.walk"
+        case .driving: return "car.fill"
+        case .transit: return "tram.fill"
+        }
+    }
+}
+
+/// An active point-to-point route between two of the user's saved pins.
+/// Holds both endpoints (resolved to coordinates up front so a later
+/// delete of the pin can't strand the computation), the chosen travel
+/// mode, and the computed result (polyline + ETA + distance) once
+/// `MKDirections` returns. `isLoading` / `errorMessage` drive the readout's
+/// spinner and failure states. Not `Equatable` — it carries a class-backed
+/// `MKPolyline` and `CLLocationCoordinate2D`s, and nothing diffs it.
+struct ActiveRoute {
+    let fromID: String
+    let toID: String
+    let fromName: String
+    let toName: String
+    let fromCoord: CLLocationCoordinate2D
+    let toCoord: CLLocationCoordinate2D
+    var mode: RouteTravelMode
+    var polyline: MKPolyline?
+    var travelTime: TimeInterval?
+    var distance: CLLocationDistance?
+    var isLoading: Bool
+    var errorMessage: String?
 }
 
 /// A list the user created in-app, with an optional cover image used as

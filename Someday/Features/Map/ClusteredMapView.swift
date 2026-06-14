@@ -136,6 +136,13 @@ struct ClusteredMapView: UIViewRepresentable {
     /// parent disarms and returns the map to normal.
     var onCancelDeleteMode: () -> Void = {}
 
+    /// The travel route to draw between two saved pins, if any. Set from
+    /// `MapViewModel.activeRoute?.polyline` — nil when no route is active.
+    /// Rendered as a single rounded blue overlay via the coordinator's
+    /// `rendererFor`. Swapping in a new polyline (a mode change) or nil
+    /// (route cleared) is reconciled in `syncRouteOverlay`.
+    var routePolyline: MKPolyline? = nil
+
     /// Tag stamped on the red × delete button so the cancel-tap gesture
     /// can recognise (and ignore) touches that land on it — otherwise a
     /// tap on the × would both delete AND fire the "tapped elsewhere"
@@ -234,8 +241,29 @@ struct ClusteredMapView: UIViewRepresentable {
         // `deletingPlaceID`. Cheap + idempotent, same as syncBreathing.
         syncDeleteBadges(on: mapView, coordinator: context.coordinator)
 
+        // Reconcile the route polyline overlay against `routePolyline`.
+        syncRouteOverlay(on: mapView)
+
         if Self.significantlyDifferent(mapView.region, region) {
             mapView.setRegion(region, animated: true)
+        }
+    }
+
+    /// Reconcile the on-map route overlay with `routePolyline`. MapKit has
+    /// no diff for overlays, so we compare by object identity: if the
+    /// requested polyline is already the one on the map, leave it; otherwise
+    /// drop every existing route line and add the new one (or just drop, when
+    /// `routePolyline` went nil because the route was cleared). We only ever
+    /// manage `MKPolyline` overlays here, so this never touches any other
+    /// overlay type a future surface might add.
+    private func syncRouteOverlay(on mapView: MKMapView) {
+        let existing = mapView.overlays.compactMap { $0 as? MKPolyline }
+        if let poly = routePolyline {
+            if existing.contains(where: { $0 === poly }) { return }
+            if !existing.isEmpty { mapView.removeOverlays(existing) }
+            mapView.addOverlay(poly, level: .aboveRoads)
+        } else if !existing.isEmpty {
+            mapView.removeOverlays(existing)
         }
     }
 
@@ -524,6 +552,22 @@ struct ClusteredMapView: UIViewRepresentable {
                 }
             }
             return true
+        }
+
+        /// Render the route polyline as a rounded brand-blue line with a
+        /// soft white casing underneath, so it reads clearly over both the
+        /// muted land and water of the map. MapKit asks for a renderer once
+        /// per added overlay and caches it.
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            guard let polyline = overlay as? MKPolyline else {
+                return MKOverlayRenderer(overlay: overlay)
+            }
+            let renderer = MKPolylineRenderer(polyline: polyline)
+            renderer.strokeColor = UIColor(SomedayColors.primary)
+            renderer.lineWidth = 5
+            renderer.lineCap = .round
+            renderer.lineJoin = .round
+            return renderer
         }
 
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {

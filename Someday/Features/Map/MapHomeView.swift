@@ -178,6 +178,7 @@ struct MapHomeView: View {
             savedToastLayer
             searchLayer
             friendFilterBanner
+            routeOverlayLayer
             profileLayer
             placeCardLayer
             // Carousel-style suggestion tile in the same bottom slot
@@ -822,6 +823,15 @@ struct MapHomeView: View {
             vm.flyTo(latitude: lat, longitude: lon, span: span)
             return .handled
 
+        case .route(let fromID, let toID):
+            // "Show me the route from X to Y" — draw a travel route between
+            // two saved pins. Collapse the chat so the map (with the line +
+            // readout) is the focus. Discards if either id isn't a saved pin
+            // (the VM resolves them); the chat falls back to plain text then.
+            Haptics.medium()
+            collapseChrome()
+            return vm.showRoute(fromID: fromID, toID: toID) ? .handled : .discarded
+
         case .planDay:
             // "See the whole day" — re-frame the active itinerary's stops
             // as the swipeable route. Collapse the chat so the map is the
@@ -1043,7 +1053,10 @@ struct MapHomeView: View {
             onRequestDeletePlace: { place in
                 Task { await vm.confirmPinDeletion(placeID: place.id) }
             },
-            onCancelDeleteMode: { vm.cancelPinDeleteMode() }
+            onCancelDeleteMode: { vm.cancelPinDeleteMode() },
+            // The travel route between two saved pins, when the chat asked
+            // for one via `someday://route?from=…&to=…`. nil = no route.
+            routePolyline: vm.activeRoute?.polyline
         )
         .ignoresSafeArea()
         // Resolve the current city name whenever the viewport settles.
@@ -1863,6 +1876,125 @@ struct MapHomeView: View {
             .padding(.top, 56)
             .transition(.move(edge: .top).combined(with: .opacity))
         }
+    }
+
+    // MARK: - Route readout
+
+    /// Floating top banner shown while a point-to-point route is active
+    /// (set by the chat's `someday://route?from=…&to=…` action). Shows the
+    /// two endpoints, a Walk/Drive/Transit toggle, and the live ETA +
+    /// distance (or a spinner while MapKit computes, or a short failure
+    /// note). The × clears the route. Mirrors `friendFilterBanner`'s top
+    /// placement + glass-card styling so the two read as one family.
+    @ViewBuilder
+    private var routeOverlayLayer: some View {
+        if let route = vm.activeRoute {
+            VStack {
+                VStack(spacing: 10) {
+                    // Title row: From → To + dismiss.
+                    HStack(spacing: 8) {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(SomedayColors.primary)
+                        Text("\(route.fromName) → \(route.toName)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(SomedayColors.charcoal)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 6)
+                        Button {
+                            withAnimation(SomedayAnimations.tile) { vm.clearRoute() }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(SomedayColors.grayMedium)
+                                .frame(width: 26, height: 26)
+                                .background(SomedayColors.grayLight)
+                                .clipShape(Circle())
+                        }
+                    }
+
+                    // Mode toggle + ETA/distance readout.
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            ForEach(RouteTravelMode.allCases, id: \.self) { mode in
+                                routeModeButton(mode, selected: route.mode == mode)
+                            }
+                        }
+
+                        Spacer(minLength: 6)
+
+                        // Result slot: spinner → distance/ETA → error.
+                        if route.isLoading {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .frame(height: 18)
+                        } else if let message = route.errorMessage {
+                            Text(message)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(SomedayColors.coral)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } else {
+                            Text(routeSummary(route))
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(SomedayColors.charcoal)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(SomedayColors.anthropicWhite)
+                .cornerRadius(16)
+                .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+                .padding(.horizontal, 16)
+
+                Spacer()
+            }
+            .padding(.top, 56)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// One segment of the Walk/Drive/Transit toggle.
+    @ViewBuilder
+    private func routeModeButton(_ mode: RouteTravelMode, selected: Bool) -> some View {
+        Button {
+            withAnimation(SomedayAnimations.chipToggle) { vm.setRouteMode(mode) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: mode.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(mode.label)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(selected ? SomedayColors.charcoal : SomedayColors.grayMedium)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(
+                Capsule().fill(selected ? SomedayColors.lime : SomedayColors.grayLight)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// "12 min · 3.4 km" — formats the computed ETA + distance. Falls back
+    /// to whichever half is available if the other is missing.
+    private func routeSummary(_ route: ActiveRoute) -> String {
+        var parts: [String] = []
+        if let t = route.travelTime {
+            let fmt = DateComponentsFormatter()
+            fmt.allowedUnits = t >= 3600 ? [.hour, .minute] : [.minute]
+            fmt.unitsStyle = .abbreviated
+            if let s = fmt.string(from: max(t, 60)) { parts.append(s) }
+        }
+        if let d = route.distance {
+            let fmt = MKDistanceFormatter()
+            fmt.unitStyle = .abbreviated
+            parts.append(fmt.string(fromDistance: d))
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Feedback Pill

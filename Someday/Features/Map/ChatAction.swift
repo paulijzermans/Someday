@@ -63,6 +63,15 @@ enum ChatAction: Equatable {
     /// Optional — the view layer falls back to a sane default.
     case showOnMap(name: String, latitude: Double, longitude: Double, span: Double?)
 
+    /// `someday://route?from=<id>&to=<id>` — draw a travel route between
+    /// two of the user's SAVED pins. The map resolves both ids to their
+    /// coordinates, computes the polyline via `MKDirections` (walking /
+    /// driving / transit), frames both ends, and shows a floating mode
+    /// toggle + ETA/distance readout. Carries only the two pin ids; the
+    /// VM owns the coordinate lookup + the route computation so the link
+    /// stays tiny and the model never has to know lat/lon for a route.
+    case route(fromID: String, toID: String)
+
     /// `someday://plan` — re-frame the day plan the chat agent most
     /// recently built via `create_itinerary`. The plan itself arrives over
     /// the SSE `mutation` channel (not as a link), so this carries no
@@ -140,6 +149,19 @@ enum ChatAction: Equatable {
             let span = items.first(where: { $0.name == "span" })?.value
                 .flatMap(Double.init)
             self = .showOnMap(name: name, latitude: lat, longitude: lon, span: span)
+
+        case "route":
+            // `someday://route?from=<id>&to=<id>` — both ids must be
+            // present; the VM resolves them to saved pins (and discards
+            // if either isn't on the map).
+            let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let items = comps?.queryItems ?? []
+            guard
+                let from = items.first(where: { $0.name == "from" })?.value,
+                let to = items.first(where: { $0.name == "to" })?.value,
+                !from.isEmpty, !to.isEmpty
+            else { return nil }
+            self = .route(fromID: from, toID: to)
 
         case "plan":
             // No payload — the plan lives on the VM (set when the

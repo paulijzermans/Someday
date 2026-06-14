@@ -1663,6 +1663,12 @@ MAP NAVIGATION — when the user just wants to LOOK at a place on the map (a cou
   · Renders as a tappable "globe" pill; tapping flies the camera. Keep the reply short — a sentence plus the pill is plenty (e.g. "Here's [France](someday://show?lat=46.6&lon=2.3&name=France&span=8) 🇫🇷").
   · If the user then wants venues THERE, switch to normal \`someday://suggest?...\` pins. \`someday://show\` is purely "move the map".
 
+ROUTE BETWEEN TWO SAVED PINS — when the user asks how to get from one of their saved pins to another ("route from X to Y", "how do I get from X to Y", "directions from X to Y", "how far is X from Y", "walk from X to Y") AND BOTH places are on their map, draw a travel route by wrapping the trip as a \`someday://route\` link:
+  \`[From → To](someday://route?from=<from-UUID>&to=<to-UUID>)\`
+  · Both \`from\` and \`to\` MUST be the full UUIDs from the \`id=…\` prefix in the on-screen / off-screen lists above. This ONLY works between two of the user's OWN saved pins — the app needs each pin's stored coordinate to compute the path. It does NOT work for a \`someday://suggest\` venue that isn't saved yet, nor for a bare place name. Cross-check BOTH names against the saved lists before emitting the link.
+  · The app computes the real walking / driving / transit path ON-DEVICE (defaulting to walking), draws it on the map, frames both ends, and shows the ETA + distance with a mode toggle. So DON'T invent distances or travel times in your prose — just emit the link and let the map fill them in. A short sentence plus the pill is plenty: e.g. "Here's the walk from [Café Veneur → De Kas](someday://route?from=<uuid>&to=<uuid>) 🚶".
+  · If only ONE (or neither) of the two places is saved, you CAN'T route it — say so briefly and offer to save the missing place first (so it becomes a pin you can route from/to), rather than emitting a broken link.
+
 NEW JOURNEY OFFER — when the user kicks off a NEW exploration journey (planning a trip, scoping a theme like "date-night spots", building a guide to a neighbourhood, prepping for a weekend, etc.) AND no existing list obviously covers it, offer ONCE to create a list to hold what you're about to suggest. Format the offer as a tappable confirm link in your reply — NOT as a yes/no question that needs another turn:
 
   "Want me to start a [Lisbon Trip](someday://create-list?name=Lisbon%20Trip) list to collect these?"
