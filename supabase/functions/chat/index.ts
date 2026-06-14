@@ -1607,6 +1607,7 @@ Guidelines:
 - Lead with what's on screen. When the user says "around here", "this area", "what's good nearby", or asks about an unspecified place, ${anchorRule}
 - If a pin is selected, it IS the subject. The user opened this chat with that pin in hand (they tapped "Ask Someday about this", or it's the pin they're looking at), so the context is already established. Answer their question about THAT pin directly. NEVER open with a confirmation like "Are you asking about X?", "Do you mean X?", "Just to confirm, you're talking about X?" — that re-asks something the UI already told you. Skip the check-in entirely and go straight to the answer. Only switch subjects if the user explicitly names a different place.
 - For comparisons or recommendations between THEIR saved places, prefer visible pins. Reach into off-screen places only when the user asks about a specific neighbourhood/list/friend that isn't currently in view.
+- RANKING / "BEST" REQUESTS — when the user asks you to find or go to their best/highest-rated/top pin ("show me my highest food-score spot", "what's my best-rated coffee place", "take me to my top pick"), the scope is ambiguous: they might mean the pins currently ON SCREEN, or ALL their saved places (most of which are off-screen). Before answering, ask ONE short clarifying question in plain text — e.g. "Across the pins on screen right now, or all your saved places?" — then rank by \`myRating\` (the /10 score shown after each name; treat it as the food-score for food pins). Both the on-screen block and the off-screen summary above carry these ratings, so once you know the scope you can rank either set. Skip the question only if the user already made scope explicit ("of everything I've saved", "the ones I can see").
 - ${recRule}
 - NEVER invent or hallucinate a place OR EVENT you're not confident exists. If you're unsure about a venue in a specific neighbourhood, say so honestly — "I'm not sure what's good on that exact street" beats a made-up name. Same for events: don't invent a concert that isn't on the venue's actual calendar. If web_search doesn't surface a real listing for the date the user asked about, say "nothing solid on that night" rather than guessing.
 - NEVER claim a place is on their map when it isn't. Cross-check against the names you can see in the on-screen and off-screen lists before saying "you've saved X".
@@ -1726,9 +1727,19 @@ function renderOffScreenSummary(ctx: ChatContext): string {
     ? "(none)"
     : friends.map((f) => f.name).join(", ");
 
+  // NB: we append the user's rating (myRating, a /10 "food-score" for food
+  // pins) to every off-screen name. Without it the model could rank "my
+  // best-rated pin" ONLY across the on-screen set (the visible-pins block is
+  // the only other place ratings appear) — so a "highest food-score across ALL
+  // my places" request was unanswerable for anything off-screen. Carrying the
+  // score here (cheap — one float per pin) lets the model honour a "all pins"
+  // ranking after it clarifies scope with the user. Pins with no rating are
+  // emitted bare so the model can tell rated from un-rated.
   const myNames = myPlaces.length === 0
     ? "(none)"
-    : myPlaces.map((p) => `id=${p.id}:${p.name}`).slice(0, 200).join(", ")
+    : myPlaces.map((p) =>
+        `id=${p.id}:${p.name}${p.myRating != null ? ` (${p.myRating.toFixed(1)}/10)` : ""}`
+      ).slice(0, 200).join(", ")
         + (myPlaces.length > 200 ? ` …and ${myPlaces.length - 200} more` : "");
 
   const friendNames = friendPlaces.length === 0

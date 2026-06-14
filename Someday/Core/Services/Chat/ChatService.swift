@@ -409,6 +409,11 @@ struct PlaceDigest: Codable, Sendable {
     }
 
     /// Slim payload — for the off-screen summary tier.
+    /// We deliberately keep this lean (no area/coords/source/owner) to hold the
+    /// payload down, but we DO carry `myRating`: it's the user's /10 score (the
+    /// "food-score" for food pins) and the only field that lets the model rank
+    /// "my best-rated pin" across ALL saved places, not just the on-screen set.
+    /// One float per pin is negligible next to the names we already send.
     static func slim(
         from p: Place,
         inLists: [String]
@@ -421,7 +426,7 @@ struct PlaceDigest: Codable, Sendable {
             area: nil,
             latitude: nil,
             longitude: nil,
-            myRating: nil,
+            myRating: p.review?.overall,
             source: nil,
             owner: nil
         )
