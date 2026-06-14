@@ -29,6 +29,28 @@
 // cost/latency.
 //
 // Reuses the same `ANTHROPIC_API_KEY` env var the other functions use.
+//
+// -----------------------------------------------------------------------------
+// ⚠️  TELEMETRY / INSTRUMENTATION MUST NEVER BE IN THE CRITICAL PATH.  ⚠️
+// -----------------------------------------------------------------------------
+// Hard-won rule — read this before adding ANY logging, metrics, debug-row, or
+// usage write to this function. A DB insert issued at end-of-stream can HANG
+// INDEFINITELY in the Supabase edge isolate, and because a pending outbound
+// `fetch` keeps the HTTP response connection open, *any* telemetry you `await`
+// (or otherwise keep pending) before `controller.close()` strands the buffered
+// `done` event and hangs the client for the full request timeout (~40s). This
+// already shipped once and cost a long debugging session.
+//
+// Rules for new instrumentation here:
+//   1. NEVER `await` a telemetry write before closing the stream.
+//   2. `controller.close()` FIRST; fire telemetry loosely (`void Promise…`)
+//      AFTER — see the stream's `finally` block for the canonical shape.
+//   3. Do NOT try to "guarantee" a row lands (timeout-bounded await, withCap,
+//      EdgeRuntime.waitUntil all FAILED — each keeps the fetch pending and
+//      re-hangs the client). Telemetry is best-effort by design: the
+//      `console.log` line is always captured; the queryable row is disposable.
+//   4. If you need reliable end-of-turn data, write it BEFORE the model call
+//      (while nothing is streaming) — never in the close path.
 // =============================================================================
 
 import Anthropic from "npm:@anthropic-ai/sdk@0.65.0";
