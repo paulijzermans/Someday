@@ -271,14 +271,18 @@ Deno.serve(async (req) => {
           // resolves) NOR the low-level async-iterable (`for await` /
           // `.next()`) terminate in the Supabase/Deno edge runtime — the
           // Anthropic API keeps the SSE socket alive after `message_stop`, and
-          // the SDK's line-buffering decoder strands its final event(s) waiting
-          // for an EOF / next chunk that never comes. That single hang
-          // stranded EVERYTHING after the text: the tool loop, the `selection`
-          // event, `done`, and the debug-row write (the chat only LOOKED alive
-          // because text streams before the block). Reading the raw body
-          // ourselves, we process each complete `\n\n`-delimited event the
-          // instant its bytes arrive and stop the moment we see the terminal
-          // `message_delta`/`message_stop` — never issuing the read that hangs.
+          // the final control events strand upstream waiting for an EOF / next
+          // chunk that never comes. Hand-rolling the reader doesn't by itself
+          // escape that — a plain `reader.read()` still blocks forever on the
+          // stranded tail (see the idle-timeout watchdog below, which is what
+          // actually breaks the deadlock). What hand-rolling buys us is the
+          // freedom to (a) process each `\n\n` event the instant its bytes
+          // arrive, and (b) race the read against an idle timer.
+          //
+          // `abortController` lets us forcibly tear the kept-alive socket down
+          // once we've finalized (see the idle-timeout watchdog below). Without
+          // it the underlying fetch lingers open across loop iterations.
+          const abortController = new AbortController();
           const response = await anthropic.messages.create({
             model: MODEL,
             max_tokens: 1024,
@@ -490,7 +494,7 @@ Deno.serve(async (req) => {
               } as any,
             ],
             messages: conversation,
-          }).asResponse();
+          }, { signal: abortController.signal }).asResponse();
 
           // --- Parse the raw SSE body ourselves and assemble the final
           // assistant message. We reconstruct exactly what `finalMessage()`
@@ -575,18 +579,61 @@ Deno.serve(async (req) => {
           // Hand-rolled SSE reader. We split the raw body on the `\n\n` event
           // boundary and parse each event's `data:` JSON as soon as a chunk
           // delivers it — no SDK line-buffer lag — and stop the moment
-          // `handleEvent` reports the turn is terminal, WITHOUT a trailing read
-          // (the read that would block forever on the kept-alive socket).
+          // `handleEvent` reports the turn is terminal.
+          //
+          // THE HANG + ITS FIX. In the Supabase/Deno edge runtime the Anthropic
+          // SSE socket stays open after `message_stop`, and Deno's fetch
+          // overrides our `accept-encoding: identity` so the body comes back
+          // gzipped — and Deno's streaming gunzip holds the tail of the final
+          // member until more bytes (or EOF) arrive. Neither comes: the API
+          // keeps the connection alive, so the LAST control events
+          // (content_block_stop / message_delta / message_stop) never surface
+          // and `reader.read()` blocks forever. The visible symptom is exactly
+          // what the repro showed: the text deltas flush, then the stream wedges
+          // with no `done` — stranding the tool loop, `selection`, `done`, and
+          // the debug-row write (the turn LOOKS alive because text streams
+          // before the stall).
+          //
+          // Fix: a per-read idle watchdog. We race each `reader.read()` against
+          // a timer. While the model is doing real work — emitting tokens, or
+          // running web_search (which sends periodic `ping` keep-alives) — bytes
+          // keep arriving and reset the timer. Once the model is genuinely done,
+          // the socket goes silent (the tail is stranded) and the idle timer
+          // fires: we conclude the turn is complete and finalize with the blocks
+          // we've assembled, never issuing the read that would hang forever.
+          const IDLE_MS = 1500;       // silence after data ⇒ wedged on stranded tail
+          const FIRST_BYTE_MS = 15000; // generous wait for the first byte (TTFT)
           let done = false;
+          let wedged = false;
           try {
             const body = response.body;
             if (!body) throw new Error("no response body");
             const reader = body.getReader();
             const decoder = new TextDecoder();
             let buf = "";
+            let sawData = false;
             while (!done) {
-              const { value, done: readerDone } = await reader.read();
+              // Race the next read against an idle timeout. `setTimeout`'s id is
+              // captured so we always clear it — a leaked timer would keep the
+              // isolate alive past the turn.
+              let timer: number | undefined;
+              const idle = new Promise<"idle">((resolve) => {
+                timer = setTimeout(
+                  () => resolve("idle"),
+                  sawData ? IDLE_MS : FIRST_BYTE_MS,
+                ) as unknown as number;
+              });
+              const result = await Promise.race([reader.read(), idle]);
+              if (timer !== undefined) clearTimeout(timer);
+              if (result === "idle") {
+                // Socket went quiet with the terminal events stranded upstream.
+                // Treat the turn as complete and finalize below.
+                wedged = true;
+                break;
+              }
+              const { value, done: readerDone } = result;
               if (readerDone) break;
+              sawData = true;
               buf += decoder.decode(value, { stream: true });
               let nl: number;
               while ((nl = buf.indexOf("\n\n")) !== -1) {
@@ -617,13 +664,52 @@ Deno.serve(async (req) => {
                 }
               }
             }
-            // Release the upstream socket without awaiting — we have everything
-            // we need; `cancel()` may hang on the kept-alive socket otherwise.
+            // Release the upstream socket. `cancel()` may itself hang on the
+            // kept-alive connection, so we DON'T await it; `abort()` tears the
+            // underlying fetch down deterministically.
             reader.cancel().catch(() => {});
+            // Only force-abort when we BAILED on a wedged stream — there the
+            // socket is still open and must be torn down. On a clean finish the
+            // stream already ended; aborting the just-consumed fetch can wedge
+            // the isolate, so we leave it alone.
+            if (wedged) abortController.abort();
           } catch (streamErr) {
+            abortController.abort();
             dbgError = dbgError ?? `stream: ${String(streamErr)}`;
             send("error", { message: dbgError });
             break;
+          }
+
+          // FINALIZE A WEDGED STREAM. When the idle watchdog fired, the terminal
+          // events never arrived, so two things may be missing: (1) a tool_use
+          // block's `content_block_stop` (which parses its accumulated input
+          // JSON), and (2) the `message_delta` that carries `stop_reason`.
+          // Reconstruct both from what we have so the tool loop below behaves
+          // exactly as it would have on a clean stream.
+          if (wedged) {
+            for (let i = 0; i < blocks.length; i++) {
+              const b = blocks[i];
+              if (b && (b.type === "tool_use" || b.type === "server_tool_use")) {
+                const hasInput = b.input != null && Object.keys(b.input).length > 0;
+                const raw = partialJSON[i] ?? "";
+                if (!hasInput && raw.trim().length > 0) {
+                  try {
+                    b.input = JSON.parse(raw);
+                  } catch (_e) { /* leave default {} — handler degrades */ }
+                }
+              }
+            }
+            if (stopReason == null) {
+              // Only CLIENT `tool_use` blocks drive another loop iteration —
+              // mirror the downstream filter (web_search is `server_tool_use`,
+              // resolved inline). If the model was mid tool-call, say so; else
+              // the turn ended normally.
+              // deno-lint-ignore no-explicit-any
+              const hasClientTool = blocks.some((b: any) =>
+                b && b.type === "tool_use"
+              );
+              stopReason = hasClientTool ? "tool_use" : "end_turn";
+            }
           }
 
           const message = {
@@ -762,30 +848,43 @@ Deno.serve(async (req) => {
         dbgError = String(err);
         send("error", { message: String(err) });
       } finally {
-        // Flush token usage for this turn. Best-effort and awaited inside
-        // the finally so it runs whether the turn completed or errored
-        // mid-stream (the user still spent those tokens). Never throws —
-        // `recordTokenUsage` swallows its own failures.
-        await recordTokenUsage(callerUserID, tokensThisTurn);
-        // Write the per-turn observability row. Best-effort, never throws.
-        await recordChatDebug({
-          userID: callerUserID,
-          userMessage: dbgUserMessage,
-          tools: dbgTools,
-          selection: dbgSelection,
-          replyText: dbgReplyText,
-          error: dbgError,
-          meta: { traceId, tokens: tokensThisTurn, iterations: dbgIterations, model: MODEL },
-        });
-        // Mirror the turn outcome into the unified cross-surface stream so a
-        // chat trace reads out alongside iOS + other-function breadcrumbs.
-        // (Best-effort; on a mid-stream hang this finally never runs and the
-        // entry `request_received` row is what flags the stall.)
-        await (dbgError
-          ? log.error("chat turn failed", { event: "turn_failed", userId: callerUserID, data: { error: dbgError, tools: dbgTools, iterations: dbgIterations } })
-          : log.info("chat turn complete", { event: "completed", userId: callerUserID, data: { tools: dbgTools, iterations: dbgIterations, tokens: tokensThisTurn, hadSelection: dbgSelection != null } }));
         globalThis.removeEventListener("unhandledrejection", onUnhandled);
-        controller.close();
+
+        // CLOSE FIRST — the reply is done, so end the stream and free the client
+        // immediately. This is the whole point: telemetry is observability we
+        // added, and it must NEVER be able to block a real reply. We learned the
+        // hard way that a DB insert issued at this point can hang indefinitely,
+        // and *any* shape that keeps that insert's fetch pending before close
+        // (awaiting it, bounding it with a timeout, or registering it via
+        // EdgeRuntime.waitUntil) keeps the HTTP connection open and hangs the
+        // client for the full request timeout. So we never wait on telemetry.
+        try {
+          controller.close();
+        } catch (_e) {
+          // Already closed or errored — nothing to do.
+        }
+
+        // Then fire telemetry loosely, never awaited. Whatever lands before the
+        // isolate is recycled, lands; the rest is dropped. That trade is correct:
+        // a fast, reliable reply beats a guaranteed debug row. `console.log` in
+        // the logger always captures the line regardless, so nothing is truly
+        // lost — only the queryable `debug_log` / `chat_debug_log` rows are
+        // best-effort.
+        void Promise.allSettled([
+          dbgError
+            ? log.error("chat turn failed", { event: "turn_failed", userId: callerUserID, data: { error: dbgError, tools: dbgTools, iterations: dbgIterations } })
+            : log.info("chat turn complete", { event: "completed", userId: callerUserID, data: { tools: dbgTools, iterations: dbgIterations, tokens: tokensThisTurn, hadSelection: dbgSelection != null } }),
+          recordTokenUsage(callerUserID, tokensThisTurn),
+          recordChatDebug({
+            userID: callerUserID,
+            userMessage: dbgUserMessage,
+            tools: dbgTools,
+            selection: dbgSelection,
+            replyText: dbgReplyText,
+            error: dbgError,
+            meta: { traceId, tokens: tokensThisTurn, iterations: dbgIterations, model: MODEL },
+          }),
+        ]);
       }
     },
   });
@@ -1588,8 +1687,18 @@ function renderFullPlace(p: PlaceDigest): string {
 }
 
 function renderOffScreenSummary(ctx: ChatContext): string {
+  // Defensive: a partial / malformed context (any of these arrays absent)
+  // must NOT crash the whole turn. The iOS client always sends all four, but
+  // a hand-rolled caller (curl, a future surface, a dropped field) shouldn't
+  // take the chat down with a "not iterable" TypeError before the stream even
+  // starts — degrade to "(none)" instead.
+  const myPlaces = ctx.myPlaces ?? [];
+  const lists = ctx.lists ?? [];
+  const friends = ctx.friends ?? [];
+  const friendPlaces = ctx.friendPlaces ?? [];
+
   const byCat: Record<string, number> = {};
-  for (const p of ctx.myPlaces) {
+  for (const p of myPlaces) {
     byCat[p.category] = (byCat[p.category] ?? 0) + 1;
   }
   const catLine = Object.keys(byCat).length === 0
@@ -1599,25 +1708,25 @@ function renderOffScreenSummary(ctx: ChatContext): string {
         .map(([cat, n]) => `${cat} ×${n}`)
         .join(", ");
 
-  const listsBlock = ctx.lists.length === 0
+  const listsBlock = lists.length === 0
     ? "(none)"
-    : ctx.lists.map((l) => `- ${l.name} (${l.placeCount} places)`).join("\n");
+    : lists.map((l) => `- ${l.name} (${l.placeCount} places)`).join("\n");
 
-  const friendsBlock = ctx.friends.length === 0
+  const friendsBlock = friends.length === 0
     ? "(none)"
-    : ctx.friends.map((f) => f.name).join(", ");
+    : friends.map((f) => f.name).join(", ");
 
-  const myNames = ctx.myPlaces.length === 0
+  const myNames = myPlaces.length === 0
     ? "(none)"
-    : ctx.myPlaces.map((p) => `id=${p.id}:${p.name}`).slice(0, 200).join(", ")
-        + (ctx.myPlaces.length > 200 ? ` …and ${ctx.myPlaces.length - 200} more` : "");
+    : myPlaces.map((p) => `id=${p.id}:${p.name}`).slice(0, 200).join(", ")
+        + (myPlaces.length > 200 ? ` …and ${myPlaces.length - 200} more` : "");
 
-  const friendNames = ctx.friendPlaces.length === 0
+  const friendNames = friendPlaces.length === 0
     ? "(none)"
-    : ctx.friendPlaces.map((p) => `id=${p.id}:${p.name}${p.owner ? ` (${p.owner})` : ""}`).slice(0, 100).join(", ")
-        + (ctx.friendPlaces.length > 100 ? ` …and ${ctx.friendPlaces.length - 100} more` : "");
+    : friendPlaces.map((p) => `id=${p.id}:${p.name}${p.owner ? ` (${p.owner})` : ""}`).slice(0, 100).join(", ")
+        + (friendPlaces.length > 100 ? ` …and ${friendPlaces.length - 100} more` : "");
 
-  return `Total saved places: ${ctx.myPlaces.length}
+  return `Total saved places: ${myPlaces.length}
 By category: ${catLine}
 My place names: ${myNames}
 Friends' visible place names: ${friendNames}
