@@ -1,7 +1,0 @@
-{
-  "name": "small talk — a greeting must NOT trigger any data tools",
-  "prompt": "Hey, how are you today?",
-  "expect": {
-    "toolsNoneOf": ["inspect_list", "inspect_friend", "create_place", "create_list", "delete_place", "delete_list", "geocode_address", "web_search"]
-  }
-}

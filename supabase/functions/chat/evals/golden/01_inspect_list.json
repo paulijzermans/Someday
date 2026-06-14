@@ -1,8 +1,0 @@
-{
-  "name": "inspect_list — describing a named list calls the tool and links its places",
-  "prompt": "What's in my Dinner list?",
-  "expect": {
-    "toolsAllOf": ["inspect_list"],
-    "textIncludesAnyOf": ["someday://place/"]
-  }
-}

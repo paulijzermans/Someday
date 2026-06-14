@@ -1,0 +1,6 @@
+# Pinned-ish deps for the Someday chat-service (FastAPI on Railway).
+# Keep in sync with the Dockerfile's pip install if you bump a version.
+fastapi
+uvicorn[standard]
+anthropic
+httpx

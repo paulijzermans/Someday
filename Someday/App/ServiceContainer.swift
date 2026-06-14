@@ -103,9 +103,10 @@ final class ServiceContainer {
                 fallback: MockReservationCheckService()
             ),
             chat: ChatRouter(
-                // Edge Function `chat`. Falls back to keyword-matched mock
-                // replies when the function isn't deployed yet.
-                live: SupabaseChatService(),
+                // chat-service (FastAPI on Railway). Falls back to
+                // keyword-matched mock replies when CHAT_SERVICE_URL /
+                // CHAT_SERVICE_API_KEY aren't configured in Secrets.plist.
+                live: RemoteChatService(),
                 fallback: MockChatService()
             ),
             // No itinerary backend yet — live stays nil, so the router runs

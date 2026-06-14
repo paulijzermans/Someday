@@ -766,15 +766,73 @@ struct ItineraryRouter: ItineraryService {
 }
 
 // =============================================================================
-// Supabase Edge Function client
+// ChatServiceConfig — URL + shared secret for the FastAPI chat-service (Railway)
 // =============================================================================
+//
+// The AI chat runs on a dedicated FastAPI service on Railway (chat-service/),
+// NOT in the Supabase `chat` Edge Function. The Deno edge runtime never reached
+// EOF on the Anthropic response when web_search was involved — non-streaming
+// `messages.create()` hung even for plain text — so the whole chat moved to a
+// normal Python runtime where the official SDK terminates cleanly. See
+// chat-service/main.py's header for the full isolation story.
+//
+// Read from the same gitignored `Secrets.plist`. When both keys are present,
+// `SupabaseChatService.stream(...)` targets this URL with the shared secret in
+// the `X-API-Key` header. When absent, it falls back to the Supabase function
+// so demo/dev without Railway still flows.
+//
+//   CHAT_SERVICE_URL      — e.g. https://someday-chat-production.up.railway.app
+//   CHAT_SERVICE_API_KEY  — shared secret, must match API_KEY on Railway
+//
+// Kept here (an already-compiled file) rather than a new file because the Xcode
+// project has no synchronized file groups — a new .swift needs a manual pbxproj
+// entry (see CLAUDE.md §10).
+enum ChatServiceConfig {
+    /// Base URL of the chat-service. `stream(...)` appends `/chat`.
+    static let url: URL? = {
+        guard let raw = value(for: "CHAT_SERVICE_URL"), let u = URL(string: raw) else { return nil }
+        return u
+    }()
 
-struct SupabaseChatService: ChatService {
-    let client: SupabaseClient
+    /// Shared secret. Sent verbatim as the `X-API-Key` header value.
+    static let apiKey: String? = value(for: "CHAT_SERVICE_API_KEY")
 
-    init() {
-        self.client = SupabaseClientProvider.shared
+    /// True only when both the URL and key are present. Gate the router consults
+    /// before preferring Railway over the Supabase fallback.
+    static var isConfigured: Bool { url != nil && (apiKey?.isEmpty == false) }
+
+    // MARK: - Plist loading (mirrors SupabaseConfig / ExtractorConfig)
+    private static let secrets: [String: Any] = {
+        guard let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+              let dict = NSDictionary(contentsOfFile: path) as? [String: Any] else {
+            return [:]
+        }
+        return dict
+    }()
+
+    private static func value(for key: String) -> String? {
+        guard let v = secrets[key] as? String, !v.isEmpty,
+              !v.hasPrefix("YOUR_") else { return nil }
+        return v
     }
+}
+
+// =============================================================================
+// RemoteChatService — streams the AI chat from the FastAPI chat-service (Railway)
+// =============================================================================
+//
+// The chat backend is the FastAPI service in `chat-service/`, deployed on
+// Railway. The Supabase `chat` Edge Function was RETIRED (June 2026): its Deno
+// runtime never reached EOF on the Anthropic response when the server-side
+// `web_search` tool was involved, so every web_search turn hung until the
+// client's 120s timeout. Moving to a normal Python runtime fixed it outright.
+//
+// Auth is the shared `X-API-Key` secret (ChatServiceConfig) — no Supabase
+// session is involved. The `ChatRouter` still falls back to `MockChatService`
+// when this service isn't configured (demo/dev), preserving CLAUDE.md's "every
+// live service has a mock counterpart" guarantee.
+
+struct RemoteChatService: ChatService {
 
     /// Convenience wrapper: drains `stream(...)` and returns only the
     /// concatenated text deltas. Discards step events. Use `stream(...)`
@@ -787,39 +845,33 @@ struct SupabaseChatService: ChatService {
         return text
     }
 
-    /// Hits the `chat` Edge Function directly with `URLSession.bytes(for:)`
-    /// so we can consume the SSE stream live. The Supabase Swift SDK's
-    /// `client.functions.invoke` is request/response only and doesn't
-    /// expose the body stream, so we bypass it here and just borrow the
-    /// session token from the configured client.
+    /// POSTs to the chat-service `/chat` endpoint and consumes the SSE stream
+    /// live via `URLSession.bytes(for:)`. The Supabase Swift SDK's
+    /// `functions.invoke` is request/response only and doesn't expose the body
+    /// stream, so we drive the request directly.
     func stream(history: [ChatMessage], context: ChatContext) -> AsyncThrowingStream<ChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    guard let baseURL = SupabaseConfig.url,
-                          let anonKey = SupabaseConfig.anonKey else {
-                        throw ChatServiceError.serverUnreachable(underlying: "Supabase config missing")
+                    // The chat-service (Railway) is the only backend. If it
+                    // isn't configured we throw, and the router falls back to
+                    // MockChatService — we never silently hit a dead endpoint.
+                    guard ChatServiceConfig.isConfigured,
+                          let chatURL = ChatServiceConfig.url,
+                          let chatKey = ChatServiceConfig.apiKey else {
+                        throw ChatServiceError.serverUnreachable(
+                            underlying: "chat-service not configured (CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY)"
+                        )
                     }
-                    let url = baseURL.appendingPathComponent("/functions/v1/chat")
+                    let url = chatURL.appendingPathComponent("/chat")
                     var req = URLRequest(url: url)
                     req.httpMethod = "POST"
                     req.timeoutInterval = 120
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    req.setValue(anonKey, forHTTPHeaderField: "apikey")
-
-                    // Bearer token: prefer the user's session JWT (so the
-                    // function sees `req.auth.uid()` if it ever cares).
-                    // Fall back to the anon key for unauthenticated calls,
-                    // which is fine for an Edge Function that only reads
-                    // body-supplied context.
-                    let bearer: String
-                    if let session = try? await client.auth.session {
-                        bearer = session.accessToken
-                    } else {
-                        bearer = anonKey
-                    }
-                    req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+                    // Shared-secret auth — no Supabase JWT involved.
+                    req.setValue(chatKey, forHTTPHeaderField: "X-API-Key")
+                    let authLabel = "x-api-key"
 
                     struct Body: Encodable {
                         let messages: [ChatMessage]
@@ -838,13 +890,13 @@ struct SupabaseChatService: ChatService {
                     Observability.breadcrumb(
                         "chat_send",
                         trace: trace,
-                        message: "POST /functions/v1/chat",
+                        message: "POST \(url.absoluteString)",
                         data: ["messages": String(history.count)]
                     )
 
                     #if DEBUG
                     print("[SupabaseChatService] POST \(url.absoluteString) trace=\(trace.id)")
-                    print("[SupabaseChatService] auth bearer prefix=\(bearer.prefix(20))…")
+                    print("[SupabaseChatService] auth=\(authLabel)")
                     #endif
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: req)

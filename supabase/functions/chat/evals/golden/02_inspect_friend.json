@@ -1,8 +1,0 @@
-{
-  "name": "inspect_friend — describing a friend's saves calls the tool",
-  "prompt": "What has Sanne saved?",
-  "expect": {
-    "toolsAllOf": ["inspect_friend"],
-    "textIncludesAnyOf": ["someday://place/", "Mr Porter"]
-  }
-}

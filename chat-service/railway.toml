@@ -1,0 +1,17 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Railway injects PORT automatically; the uvicorn CMD reads it.
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Environment variables to set on the Railway dashboard:
+#   ANTHROPIC_API_KEY = your Anthropic API key (REQUIRED)
+#   API_KEY           = a random shared secret (e.g. openssl rand -hex 32).
+#                       When set, callers must send it as `X-API-Key` (or
+#                       `Authorization: Bearer <key>`). Leave unset for open dev.
+#                       The iOS app sends this as CHAT_SERVICE_API_KEY.

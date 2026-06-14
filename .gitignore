@@ -47,3 +47,8 @@ __pycache__/
 extractor-erik/extractor-test-app/cache/
 extractor-erik/**/*.db
 extractor-erik/.env
+
+# ---- Python virtualenvs (chat-service/, etc.) ----
+.venv/
+**/.venv/
+chat-service/.env
