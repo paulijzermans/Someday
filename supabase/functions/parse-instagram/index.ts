@@ -20,6 +20,7 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.30.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, extractTraceId } from "../_shared/observe.ts";
 import {
+  background,
   type CacheableItem,
   lookupExtraction,
   serviceClient,
@@ -152,7 +153,7 @@ Deno.serve(async (req) => {
     // Deterministic emptiness — the reel simply has nothing to extract. Cache
     // it so we never re-scrape this URL hoping for a different answer.
     const note = "Post has no caption or location";
-    storeExtraction(supabase, "instagram", url, [], note);
+    background(storeExtraction(supabase, "instagram", url, [], note));
     return json({ places: [], sourceUrl: url, note });
   }
 
@@ -195,7 +196,7 @@ Deno.serve(async (req) => {
   // Populate the global cache (fire-and-forget). These places have no
   // coordinates yet (iOS geocodes them), so their identity key falls back to
   // name + address — still enough to dedupe and to replay this reel for free.
-  storeExtraction(
+  background(storeExtraction(
     supabase,
     "instagram",
     url,
@@ -206,7 +207,7 @@ Deno.serve(async (req) => {
       address: typeof p.address === "string" ? p.address : undefined,
       imageUrl: typeof p.imageUrl === "string" ? p.imageUrl : undefined,
     })),
-  );
+  ));
 
   return json({ places, sourceUrl: url });
 });

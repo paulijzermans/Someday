@@ -19,6 +19,9 @@ import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 /** Places are stable but not eternal — re-fetch after 90 days. */
 const FRESH_DAYS = 90;
 
+/** Bucket for durable copies of place thumbnails (see the migration). */
+const THUMB_BUCKET = "place-thumbnails";
+
 /** The place object an Edge Function returns to iOS, plus the extra signals we
  *  need to compute a stable identity. `placeId`/coords are stripped before the
  *  payload is served — they only feed the cache key. */
@@ -45,6 +48,18 @@ export function serviceClient(): SupabaseClient | null {
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+/** Run a promise as a background task that survives the HTTP response.
+ *  Supabase's Edge Runtime exposes `EdgeRuntime.waitUntil`; without it (local
+ *  `deno run`) the promise simply runs un-tracked. Either way the work starts
+ *  the moment it's passed in — this only extends the worker's lifetime so a
+ *  slow task (downloading thumbnails) isn't killed when we return early. */
+export function background(p: Promise<unknown>): void {
+  try {
+    // deno-lint-ignore no-explicit-any
+    (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+  } catch { /* not on Edge Runtime — let it run untracked */ }
 }
 
 /** lowercase, ascii-fold-ish, collapse to a hyphen slug. */
@@ -143,10 +158,47 @@ export async function lookupExtraction(
   }
 }
 
-/** Persist a fresh extraction: upsert each place into the global store, then
- *  record the URL → keys membership. Fire-and-forget for the caller — we never
- *  make the user wait on the cache write, and a hiccup just means the next
- *  import re-pays. */
+/** Storage-safe object name derived from a cache key (no slashes / colons). */
+function thumbPath(cacheKey: string, ext: string): string {
+  return `${cacheKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.${ext}`;
+}
+
+/** Download an external thumbnail once and upload a durable copy to Storage.
+ *  Returns the public URL, or null on any failure (the caller then keeps the
+ *  original, possibly-expiring link rather than dropping the image). */
+async function persistThumbnail(
+  supabase: SupabaseClient,
+  cacheKey: string,
+  imageUrl: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(imageUrl);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
+    const ext = contentType.includes("png") ? "png"
+      : contentType.includes("webp") ? "webp"
+      : contentType.includes("gif") ? "gif"
+      : "jpg";
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength === 0) return null;
+    const path = thumbPath(cacheKey, ext);
+    const { error } = await supabase.storage
+      .from(THUMB_BUCKET)
+      .upload(path, bytes, { contentType, upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from(THUMB_BUCKET).getPublicUrl(path);
+    return data?.publicUrl ?? null;
+  } catch (err) {
+    console.warn("thumbnail persist failed:", err);
+    return null;
+  }
+}
+
+/** Persist a fresh extraction: download + store each place's thumbnail durably,
+ *  upsert each place into the global store, then record the URL → keys
+ *  membership. Meant to be run via `background()` — the user never waits on it,
+ *  and a hiccup just means the next import re-pays. */
 export async function storeExtraction(
   supabase: SupabaseClient | null,
   source: string,
@@ -157,10 +209,21 @@ export async function storeExtraction(
   if (!supabase) return;
   try {
     const now = new Date().toISOString();
-    const keys: string[] = [];
-    const rows = items.map((it) => {
-      const key = placeCacheKey(it);
-      keys.push(key);
+    const keys: string[] = items.map(placeCacheKey);
+
+    // Download + persist thumbnails in parallel, then point the cache at the
+    // durable copies. We rewrite BOTH the structured image_url and the JSONB
+    // payload.imageUrl so a future cache hit replays a non-rotting link.
+    const rows = await Promise.all(items.map(async (it, i) => {
+      const key = keys[i];
+      let imageUrl = it.imageUrl ?? null;
+      if (imageUrl) {
+        const durable = await persistThumbnail(supabase, key, imageUrl);
+        if (durable) imageUrl = durable;
+      }
+      const payload = imageUrl
+        ? { ...it.payload, imageUrl }
+        : it.payload;
       return {
         cache_key: key,
         place_id: it.placeId ?? null,
@@ -169,13 +232,13 @@ export async function storeExtraction(
         latitude: it.latitude ?? null,
         longitude: it.longitude ?? null,
         address: it.address ?? "",
-        image_url: it.imageUrl ?? null,
+        image_url: imageUrl,
         source,
         kind: it.kind ?? "venue",
-        payload: it.payload,
+        payload,
         updated_at: now,
       };
-    });
+    }));
 
     if (rows.length > 0) {
       await supabase.from("place_cache").upsert(rows, { onConflict: "cache_key" });

@@ -17,6 +17,7 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, extractTraceId } from "../_shared/observe.ts";
 import {
+  background,
   type CacheableItem,
   lookupExtraction,
   serviceClient,
@@ -147,7 +148,7 @@ Deno.serve(async (req) => {
   // Populate the global cache (fire-and-forget). Only real venues with
   // coordinates are cacheable as place identities; everything we extracted is
   // recorded against this URL so a repeat import is served without a scrape.
-  storeExtraction(
+  background(storeExtraction(
     supabase,
     "gmaps",
     url,
@@ -162,7 +163,7 @@ Deno.serve(async (req) => {
       longitude: p.longitude,
       placeId: p.placeId,
     })),
-  );
+  ));
 
   await log.info("parsed places", { event: "completed", data: { places: places.length, rawItems: dataset.length, url } });
   return json({ places, sourceUrl: url });
