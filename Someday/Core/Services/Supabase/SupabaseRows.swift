@@ -91,6 +91,11 @@ struct PlaceRow: Codable {
     /// Round-tripped via the `place.source_url` column (migration
     /// `20260605161830_add_place_source_url.sql`).
     var source_url: String?
+    /// "venue" | "region". Surfaced by the `places_resolved` view from the
+    /// shared `places_global` registry (migration
+    /// `20260616140000_places_global_registry.sql`). Optional so older selects
+    /// that don't request it still decode — absent ⇒ `.venue`.
+    var kind: String?
     var created_at: String?
 
     /// Reviews/friendRatings are assembled from the `reviews` table and injected.
@@ -99,6 +104,7 @@ struct PlaceRow: Codable {
             id: id,
             name: name,
             category: PlaceCategory(rawValue: category) ?? .food,
+            kind: (kind == "region") ? .region : .venue,
             latitude: latitude,
             longitude: longitude,
             source: PlaceSource(rawValue: source) ?? .manual,
@@ -132,6 +138,7 @@ struct PlaceRow: Codable {
             is_saved: place.isSaved,
             image_url: place.imageURL?.absoluteString,
             source_url: place.sourceURL?.absoluteString,
+            kind: place.kind == .region ? "region" : "venue",
             created_at: nil
         )
     }

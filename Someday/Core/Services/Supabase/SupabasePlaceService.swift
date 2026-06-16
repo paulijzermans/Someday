@@ -17,8 +17,12 @@ final class SupabasePlaceService: PlaceServiceProtocol, @unchecked Sendable {
     }
 
     func fetchPlaces(for userID: String) async throws -> [Place] {
+        // Read the resolving view, not the base table: it re-COALESCEs each
+        // personal `places` row with the shared `places_global` facts and
+        // exposes the exact flat shape PlaceRow decodes. RLS on the underlying
+        // `places` table still scopes rows to the caller + friends.
         let placeRows: [PlaceRow] = try await client
-            .from("places")
+            .from("places_resolved")
             .select()
             .execute()
             .value
@@ -45,9 +49,12 @@ final class SupabasePlaceService: PlaceServiceProtocol, @unchecked Sendable {
     }
 
     func savePlace(_ place: Place) async throws {
+        // Go through save_place() rather than a raw insert: it dedupes the
+        // venue's facts into the shared `places_global` registry and inserts a
+        // THIN personal row that just points at it (descriptive columns left
+        // NULL = inherit). That's the no-double-storage win.
         try await client
-            .from("places")
-            .insert(PlaceRow.payload(from: place))
+            .rpc("save_place", params: PlaceWriteParams(from: place))
             .execute()
 
         if let review = place.review {
@@ -59,10 +66,11 @@ final class SupabasePlaceService: PlaceServiceProtocol, @unchecked Sendable {
     }
 
     func updatePlace(_ place: Place) async throws {
+        // update_place() writes personal fields straight through, and stores a
+        // descriptive field as a per-user override ONLY when it differs from
+        // the shared global value (copy-on-write — unedited places stay deduped).
         try await client
-            .from("places")
-            .update(PlaceRow.payload(from: place))
-            .eq("id", value: place.id)
+            .rpc("update_place", params: PlaceWriteParams(from: place))
             .execute()
 
         if let review = place.review {
@@ -70,6 +78,42 @@ final class SupabasePlaceService: PlaceServiceProtocol, @unchecked Sendable {
                 .from("reviews")
                 .upsert(ReviewRow.payload(placeID: place.id, authorID: place.ownerID, review: review))
                 .execute()
+        }
+    }
+
+    /// Encodable parameter bundle for the `save_place` / `update_place` RPCs.
+    /// Field names match the Postgres function argument names exactly.
+    private struct PlaceWriteParams: Encodable {
+        let p_id: String
+        let p_name: String
+        let p_category: String
+        let p_kind: String
+        let p_latitude: Double
+        let p_longitude: Double
+        let p_neighborhood: String
+        let p_source: String
+        let p_recommended_by: String?
+        let p_visited_by_ids: [String]
+        let p_tags: [String]
+        let p_is_saved: Bool
+        let p_image_url: String?
+        let p_source_url: String?
+
+        init(from place: Place) {
+            p_id = place.id
+            p_name = place.name
+            p_category = place.category.rawValue
+            p_kind = place.kind == .region ? "region" : "venue"
+            p_latitude = place.latitude
+            p_longitude = place.longitude
+            p_neighborhood = place.neighborhood
+            p_source = place.source.rawValue
+            p_recommended_by = place.recommendedBy
+            p_visited_by_ids = place.visitedByIDs
+            p_tags = place.tags
+            p_is_saved = place.isSaved
+            p_image_url = place.imageURL?.absoluteString
+            p_source_url = place.sourceURL?.absoluteString
         }
     }
 
@@ -210,9 +254,13 @@ final class SupabasePlaceService: PlaceServiceProtocol, @unchecked Sendable {
     }
 
     func toggleSaved(placeID: String, userID: String) async throws -> Bool {
-        // Read the current flag, flip it, write it back.
+        // Read the current flag from the resolving view (the base `places`
+        // row may store NULL descriptive columns now that facts live in
+        // `places_global` — PlaceRow's non-optional fields would fail to
+        // decode straight off the base table), then flip the personal
+        // `is_saved` flag back on the base `places` table.
         let rows: [PlaceRow] = try await client
-            .from("places")
+            .from("places_resolved")
             .select("id,is_saved,owner_id,name,category,latitude,longitude,source,neighborhood,recommended_by,visited_by_ids,tags,created_at")
             .eq("id", value: placeID)
             .limit(1)
