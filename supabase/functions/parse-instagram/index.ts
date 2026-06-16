@@ -19,6 +19,12 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.30.0";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, extractTraceId } from "../_shared/observe.ts";
+import {
+  type CacheableItem,
+  lookupExtraction,
+  serviceClient,
+  storeExtraction,
+} from "../_shared/place-cache.ts";
 
 const ACTOR_ID = "apify~instagram-scraper";
 const MODEL = "claude-sonnet-4-5";
@@ -79,6 +85,17 @@ Deno.serve(async (req) => {
     return json({ error: "Provide an Instagram URL (instagram.com/...)" }, 400);
   }
 
+  // -------- 1a. Global place-cache lookup --------
+  // Reels are immutable once posted, so a prior extraction of this URL is
+  // safe to replay — saving both the Apify scrape AND the Claude call. The
+  // cache is owner-agnostic and outlives the original importer's saved copy.
+  const supabase = serviceClient();
+  const cached = await lookupExtraction(supabase, "instagram", url);
+  if (cached) {
+    await log.info("cache hit", { event: "cache_hit", data: { places: cached.places.length, url } });
+    return json({ places: cached.places, sourceUrl: url, cached: true, note: cached.note });
+  }
+
   // -------- 2. Check secrets --------
   const apifyToken = Deno.env.get("APIFY_TOKEN");
   const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -132,7 +149,11 @@ Deno.serve(async (req) => {
   const tagged = post.locationName ?? "";
 
   if (!caption && !tagged) {
-    return json({ places: [], sourceUrl: url, note: "Post has no caption or location" });
+    // Deterministic emptiness — the reel simply has nothing to extract. Cache
+    // it so we never re-scrape this URL hoping for a different answer.
+    const note = "Post has no caption or location";
+    storeExtraction(supabase, "instagram", url, [], note);
+    return json({ places: [], sourceUrl: url, note });
   }
 
   const claudeInput =
@@ -170,6 +191,22 @@ Deno.serve(async (req) => {
     displayUrl ? { ...p, imageUrl: displayUrl } : p
   );
   await log.info("parsed places", { event: "completed", data: { places: places.length, url } });
+
+  // Populate the global cache (fire-and-forget). These places have no
+  // coordinates yet (iOS geocodes them), so their identity key falls back to
+  // name + address — still enough to dedupe and to replay this reel for free.
+  storeExtraction(
+    supabase,
+    "instagram",
+    url,
+    places.map((p): CacheableItem => ({
+      payload: p,
+      name: String(p.name ?? ""),
+      category: typeof p.category === "string" ? p.category : undefined,
+      address: typeof p.address === "string" ? p.address : undefined,
+      imageUrl: typeof p.imageUrl === "string" ? p.imageUrl : undefined,
+    })),
+  );
 
   return json({ places, sourceUrl: url });
 });

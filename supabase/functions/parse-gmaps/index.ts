@@ -16,6 +16,12 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { createLogger, extractTraceId } from "../_shared/observe.ts";
+import {
+  type CacheableItem,
+  lookupExtraction,
+  serviceClient,
+  storeExtraction,
+} from "../_shared/place-cache.ts";
 
 const ACTOR_ID = "compass~google-maps-extractor";  // ~ is API form of /
 const MAX_PLACES = 100;
@@ -34,6 +40,13 @@ interface ExtractedPlace {
   /// real venue — the iOS client surfaces these with a "this is not a
   /// single place" notice instead of dropping a normal pin.
   kind?: "venue" | "region";
+}
+
+/// Internal-only: an ExtractedPlace plus Google's stable placeId. The placeId
+/// never goes to the client (the response stays exactly `ExtractedPlace`); it
+/// only feeds the global place-cache identity key.
+interface EnrichedPlace extends ExtractedPlace {
+  placeId?: string;
 }
 
 Deno.serve(async (req) => {
@@ -59,6 +72,17 @@ Deno.serve(async (req) => {
   await log.info("request_received", { event: "request_received", data: { url } });
   if (!url || !/^https?:\/\//i.test(url)) {
     return json({ error: "Missing or invalid 'url'" }, 400);
+  }
+
+  // -------- 1a. Global place-cache lookup --------
+  // If anyone has imported this exact list/place before (and it's still
+  // fresh), replay the stored result for free — no Apify run. The cache is
+  // owner-agnostic and survives the original importer deleting their copy.
+  const supabase = serviceClient();
+  const cached = await lookupExtraction(supabase, "gmaps", url);
+  if (cached) {
+    await log.info("cache hit", { event: "cache_hit", data: { places: cached.places.length, url } });
+    return json({ places: cached.places, sourceUrl: url, cached: true });
   }
 
   // -------- 2. Check API token is configured --------
@@ -113,9 +137,32 @@ Deno.serve(async (req) => {
     return json({ places: [], sourceUrl: url });
   }
 
-  const places = (dataset as ApifyPlaceItem[])
+  const enriched = (dataset as ApifyPlaceItem[])
     .map(toExtractedPlace)
-    .filter((p): p is ExtractedPlace => p !== null);
+    .filter((p): p is EnrichedPlace => p !== null);
+
+  // Client contract is unchanged: strip the internal placeId before responding.
+  const places = enriched.map(({ placeId: _placeId, ...rest }) => rest);
+
+  // Populate the global cache (fire-and-forget). Only real venues with
+  // coordinates are cacheable as place identities; everything we extracted is
+  // recorded against this URL so a repeat import is served without a scrape.
+  storeExtraction(
+    supabase,
+    "gmaps",
+    url,
+    enriched.map((p): CacheableItem => ({
+      payload: (({ placeId: _id, ...rest }) => rest)(p),
+      name: p.name,
+      category: p.category,
+      address: p.address,
+      imageUrl: p.imageUrl,
+      kind: p.kind,
+      latitude: p.latitude,
+      longitude: p.longitude,
+      placeId: p.placeId,
+    })),
+  );
 
   await log.info("parsed places", { event: "completed", data: { places: places.length, rawItems: dataset.length, url } });
   return json({ places, sourceUrl: url });
@@ -142,7 +189,7 @@ interface ApifyPlaceItem {
   imageUrls?: string[];
 }
 
-function toExtractedPlace(item: ApifyPlaceItem): ExtractedPlace | null {
+function toExtractedPlace(item: ApifyPlaceItem): EnrichedPlace | null {
   const name = (item.title ?? "").trim();
   const lat = item.location?.lat;
   const lng = item.location?.lng;
@@ -164,6 +211,7 @@ function toExtractedPlace(item: ApifyPlaceItem): ExtractedPlace | null {
     category: mapCategory(item),
     imageUrl: item.imageUrl ?? item.imageUrls?.[0],
     kind: classifyKind(item),
+    placeId: item.placeId,
   };
 }
 
